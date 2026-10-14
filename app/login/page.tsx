@@ -25,7 +25,24 @@ export default function LoginPage() {
     });
 
     if (signInError) {
-      setError("Correo o contraseña incorrectos.");
+      // Supabase devuelve el mismo tipo de error para causas muy distintas;
+      // se distinguen las comunes para que se sepa qué revisar.
+      const msg = signInError.message.toLowerCase();
+      if (msg.includes("email not confirmed")) {
+        setError(
+          "Tu correo aún no está confirmado. En Supabase → Authentication → Users, confirma el usuario (o créalo de nuevo marcando \"Auto Confirm User\")."
+        );
+      } else if (msg.includes("invalid api key") || msg.includes("fetch")) {
+        setError(
+          "El portal no logra conectarse a Supabase. Revisa en Vercel NEXT_PUBLIC_SUPABASE_URL y NEXT_PUBLIC_SUPABASE_ANON_KEY y vuelve a desplegar."
+        );
+      } else if (msg.includes("invalid login credentials")) {
+        setError(
+          "Correo o contraseña incorrectos. Verifica que el usuario exista en el proyecto de Supabase del bot (Authentication → Users)."
+        );
+      } else {
+        setError(`No se pudo iniciar sesión: ${signInError.message}`);
+      }
       setLoading(false);
       return;
     }
