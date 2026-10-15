@@ -88,7 +88,7 @@ export default async function ConocimientoPage({
                     <td className="py-2 pr-4">
                       <p className="text-rethink-cream/90">{d.title}</p>
                       <p className="text-xs text-rethink-cream/50">
-                        {[d.source_id ? "OneDrive" : null, d.category, d.file_name, d.company_id ? `Solo ${companyName.get(d.company_id) ?? "una empresa"}` : null]
+                        {[d.source_id ? "Carpeta sincronizada" : null, d.category, d.file_name, d.company_id ? `Solo ${companyName.get(d.company_id) ?? "una empresa"}` : null]
                           .filter(Boolean)
                           .join(" · ") || "—"}
                       </p>

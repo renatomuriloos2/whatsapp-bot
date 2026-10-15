@@ -6,8 +6,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAppUser } from "@/lib/auth";
 import { ActionState, isRedirectError } from "@/lib/action-state";
 import { ACCESS_LEVELS } from "@/lib/ai/models";
-import { resolveFolderUrl } from "@/lib/onedrive/graph";
-import { KbSource, syncSource } from "@/lib/onedrive/sync";
+import { detectProvider, providerConfigured, resolveFolder } from "@/lib/sources";
+import { syncSource } from "@/lib/sources/sync";
+import type { KbSource } from "@/lib/sources/types";
 import { AccessLevel } from "@/types/database";
 
 function errorMessage(err: unknown, fallback: string): string {
@@ -18,15 +19,28 @@ export async function addSourceAction(_prev: ActionState, formData: FormData): P
   try {
     await requireAppUser("admin");
     const shareUrl = String(formData.get("share_url") ?? "").trim();
-    if (!shareUrl) return { error: "Pega el vínculo de la carpeta de OneDrive." };
+    if (!shareUrl) return { error: "Pega el vínculo de la carpeta." };
+    const provider = detectProvider(shareUrl);
+    if (!provider) {
+      return { error: "No reconozco el enlace. Debe ser de una carpeta de Google Drive (drive.google.com) u OneDrive." };
+    }
+    if (!providerConfigured(provider)) {
+      return {
+        error:
+          provider === "gdrive"
+            ? "Google Drive aún no está conectado: falta GOOGLE_SERVICE_ACCOUNT_JSON en Vercel."
+            : "OneDrive aún no está conectado: faltan las variables MS_* en Vercel.",
+      };
+    }
 
     const level = String(formData.get("access_level") ?? "publico") as AccessLevel;
-    const folder = await resolveFolderUrl(shareUrl);
+    const folder = await resolveFolder(provider, shareUrl);
 
     const supabase = createClient();
     const { data: source, error } = await supabase
       .from("kb_sources")
       .insert({
+        provider,
         name: String(formData.get("name") ?? "").trim() || folder.name,
         share_url: shareUrl,
         drive_id: folder.driveId,
@@ -44,7 +58,7 @@ export async function addSourceAction(_prev: ActionState, formData: FormData): P
 
     // Primera sincronización inmediata (lo que no alcance, sigue después).
     await syncSource(createAdminClient(), source as KbSource, Date.now() + 40_000);
-    revalidatePath("/onedrive");
+    revalidatePath("/carpetas");
     revalidatePath("/conocimiento");
   } catch (err) {
     if (isRedirectError(err)) throw err;
@@ -58,7 +72,7 @@ export async function syncSourceAction(formData: FormData) {
   const admin = createAdminClient();
   const { data: source } = await admin.from("kb_sources").select("*").eq("id", String(formData.get("id"))).single();
   if (source) await syncSource(admin, source as KbSource, Date.now() + 45_000);
-  revalidatePath("/onedrive");
+  revalidatePath("/carpetas");
   revalidatePath("/conocimiento");
 }
 
@@ -69,7 +83,7 @@ export async function toggleSourceAction(formData: FormData) {
     .from("kb_sources")
     .update({ enabled: formData.get("enabled") === "true" })
     .eq("id", String(formData.get("id")));
-  revalidatePath("/onedrive");
+  revalidatePath("/carpetas");
 }
 
 export async function updateSourceAccessAction(formData: FormData) {
@@ -82,7 +96,7 @@ export async function updateSourceAccessAction(formData: FormData) {
   await supabase.from("kb_sources").update({ access_level: level, company_id: companyId }).eq("id", id);
   // Los documentos ya sincronizados toman el nuevo nivel de inmediato.
   await supabase.from("kb_documents").update({ access_level: level, company_id: companyId }).eq("source_id", id);
-  revalidatePath("/onedrive");
+  revalidatePath("/carpetas");
   revalidatePath("/conocimiento");
 }
 
@@ -91,6 +105,6 @@ export async function deleteSourceAction(formData: FormData) {
   const supabase = createClient();
   // Sus documentos se borran en cascada (kb_documents.source_id).
   await supabase.from("kb_sources").delete().eq("id", String(formData.get("id")));
-  revalidatePath("/onedrive");
+  revalidatePath("/carpetas");
   revalidatePath("/conocimiento");
 }

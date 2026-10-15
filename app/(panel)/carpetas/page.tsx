@@ -2,7 +2,8 @@ import { createClient } from "@/lib/supabase/server";
 import { requireAppUser } from "@/lib/auth";
 import { getAllCompanies } from "@/lib/data";
 import { onedriveConfigured } from "@/lib/onedrive/graph";
-import { AddSourceForm, PendingButton } from "@/components/whatsapp/OneDriveForms";
+import { gdriveConfigured, gdriveServiceEmail } from "@/lib/sources/gdrive";
+import { AddSourceForm, PendingButton } from "@/components/whatsapp/FolderForms";
 import { AccessLevelBadge } from "@/components/whatsapp/Badges";
 import { CompanySelect, LevelSelect } from "@/components/whatsapp/LevelSelect";
 import {
@@ -10,7 +11,7 @@ import {
   syncSourceAction,
   toggleSourceAction,
   updateSourceAccessAction,
-} from "@/lib/actions/onedrive";
+} from "@/lib/actions/sources";
 import { AccessLevel } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -19,6 +20,7 @@ export const maxDuration = 60;
 
 interface SourceRow {
   id: string;
+  provider: "gdrive" | "onedrive";
   name: string;
   web_url: string | null;
   access_level: AccessLevel;
@@ -36,7 +38,7 @@ function formatDateTime(value: string | null) {
   return new Date(value).toLocaleString("es-CO", { dateStyle: "medium", timeStyle: "short" });
 }
 
-export default async function OneDrivePage() {
+export default async function CarpetasPage() {
   await requireAppUser("admin");
   const supabase = createClient();
   const [{ data }, companies] = await Promise.all([
@@ -45,22 +47,33 @@ export default async function OneDrivePage() {
   ]);
   const sources = (data ?? []) as SourceRow[];
   const companyName = new Map(companies.map((c) => [c.id, c.name]));
-  const configured = onedriveConfigured();
+  const serviceEmail = gdriveServiceEmail();
+  const anyConfigured = gdriveConfigured() || onedriveConfigured();
 
   return (
     <div>
-      <h1 className="mb-1 text-xl font-semibold text-rethink-cream">Carpetas de OneDrive</h1>
+      <h1 className="mb-1 text-xl font-semibold text-rethink-cream">Carpetas sincronizadas</h1>
       <p className="mb-6 text-sm text-rethink-cream/60">
-        Conecta carpetas de OneDrive o SharePoint y el bot usará sus archivos como base de
-        conocimiento. Cada día se revisan solas: lo nuevo se agrega, lo modificado se vuelve a
-        leer y lo borrado se quita. También puedes sincronizar a mano cuando quieras.
+        Conecta carpetas de Google Drive y el bot usará sus archivos como base de conocimiento.
+        Cada día se revisan solas: lo nuevo se agrega, lo modificado se vuelve a leer y lo borrado
+        se quita. También puedes sincronizar a mano cuando quieras.
       </p>
 
-      {!configured && (
-        <div className="mb-6 rounded-xl border border-rethink-amber/30 bg-rethink-amber/10 px-4 py-3 text-sm text-rethink-amber">
-          Falta conectar Microsoft: agrega en Vercel MS_TENANT_ID, MS_CLIENT_ID y MS_CLIENT_SECRET (los
-          entrega TI al registrar la aplicación) y vuelve a desplegar.
+      {serviceEmail ? (
+        <div className="mb-6 rounded-xl border border-surface/10 bg-surface/5 px-4 py-3 text-sm text-rethink-cream/80">
+          Para conectar una carpeta, primero compártela en Google Drive (como <strong>Lector</strong>)
+          con este correo:
+          <code className="mt-2 block select-all break-all rounded bg-black/20 px-2 py-1 text-rethink-orange">
+            {serviceEmail}
+          </code>
         </div>
+      ) : (
+        !anyConfigured && (
+          <div className="mb-6 rounded-xl border border-rethink-amber/30 bg-rethink-amber/10 px-4 py-3 text-sm text-rethink-amber">
+            Falta conectar Google Drive: agrega en Vercel la variable GOOGLE_SERVICE_ACCOUNT_JSON (el
+            archivo JSON de la cuenta de servicio) y vuelve a desplegar. Ver README.
+          </div>
+        )
       )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_360px]">
@@ -82,6 +95,7 @@ export default async function OneDrivePage() {
                     )}
                   </p>
                   <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-rethink-cream/60">
+                    <span>{s.provider === "gdrive" ? "Google Drive" : "OneDrive"}</span>
                     <AccessLevelBadge level={s.access_level} />
                     {s.company_id && <span>Solo {companyName.get(s.company_id) ?? "una empresa"}</span>}
                     <span>{s.category ? `Categoría: ${s.category}` : "Categoría: nombre de subcarpeta"}</span>
@@ -131,7 +145,7 @@ export default async function OneDrivePage() {
                 <form action={deleteSourceAction} className="mt-3">
                   <input type="hidden" name="id" value={s.id} />
                   <button type="submit" className="text-xs text-red-400 hover:underline">
-                    Desconectar carpeta y borrar sus documentos del bot (los archivos en OneDrive no se tocan)
+                    Desconectar carpeta y borrar sus documentos del bot (los archivos originales no se tocan)
                   </button>
                 </form>
               </details>
@@ -142,8 +156,9 @@ export default async function OneDrivePage() {
         <div className="card h-fit">
           <h3 className="mb-1 text-sm font-medium text-rethink-cream">Conectar carpeta</h3>
           <p className="mb-4 text-xs text-rethink-cream/50">
-            En OneDrive, sobre la carpeta: Compartir → Copiar vínculo, y pégalo aquí. Se leen PDF,
-            Word, TXT, Markdown y CSV de hasta 15 MB, incluidas las subcarpetas.
+            En Google Drive, abre la carpeta y copia la dirección del navegador (o clic derecho →
+            Compartir → Copiar vínculo) y pégala aquí. Se leen Documentos, Hojas y Presentaciones de
+            Google, PDF, Word, TXT y CSV de hasta 15 MB, incluidas las subcarpetas.
           </p>
           <AddSourceForm companies={companies} />
         </div>

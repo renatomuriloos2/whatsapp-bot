@@ -48,55 +48,66 @@ información reservada nunca llega al modelo si el contacto no tiene permiso.
    campo `messages`. Pasa la app a modo Live.
 7. Entra a `https://TU-DOMINIO/login` con el administrador del paso 2.
 
-## Sincronizar con OneDrive / SharePoint (opcional)
+## Sincronizar con Google Drive (opcional)
 
-El portal puede leer carpetas de OneDrive o SharePoint de Microsoft 365 y mantener la base
-de conocimiento al día: cada día (cron de Vercel, 10:00 UTC) agrega archivos nuevos, vuelve a
-leer los modificados y quita los borrados. También hay un botón **Sincronizar ahora** en
-**Administración → Carpetas de OneDrive**.
+El portal puede leer carpetas de Google Drive y mantener la base de conocimiento al día: cada
+día (cron de Vercel, 10:00 UTC) agrega archivos nuevos, vuelve a leer los modificados y quita
+los borrados. También hay un botón **Sincronizar ahora** en **Administración → Carpetas
+sincronizadas**. Lee Documentos, Hojas y Presentaciones de Google, PDF, Word, TXT, Markdown y
+CSV (hasta 15 MB), con subcarpetas; el nombre de cada subcarpeta se usa como categoría.
+
+Usa una **cuenta de servicio**: un "usuario robot" de Google que solo ve las carpetas que se
+compartan con su correo. No hace falta un administrador de Google Workspace.
 
 ### 1. Base de datos (proyectos creados antes de esta función)
 
-Corre [`supabase/migrations/002_onedrive.sql`](./supabase/migrations/002_onedrive.sql) en el
-SQL Editor de Supabase. (En proyectos nuevos ya viene en `schema.sql`.)
+Corre [`supabase/migrations/002_carpetas_sincronizadas.sql`](./supabase/migrations/002_carpetas_sincronizadas.sql)
+en el SQL Editor de Supabase. (En proyectos nuevos ya viene en `schema.sql`.)
 
-### 2. Registrar la aplicación en Microsoft (lo hace un administrador de Microsoft 365)
+### 2. Crear la cuenta de servicio (una vez)
 
-1. Entrar a [entra.microsoft.com](https://entra.microsoft.com) → **Identidad → Aplicaciones →
-   Registros de aplicaciones → Nuevo registro**.
-   - Nombre: `Rethink WhatsApp Bot - OneDrive`
-   - Tipos de cuenta: **Solo cuentas de este directorio organizativo**
-   - URI de redirección: vacío → **Registrar**.
-2. En **Información general**, copiar **Id. de aplicación (cliente)** → `MS_CLIENT_ID` e
-   **Id. de directorio (inquilino)** → `MS_TENANT_ID`.
-3. **Certificados y secretos → Nuevo secreto de cliente** (vencimiento 24 meses) → copiar el
-   **Valor** (no el Id.) → `MS_CLIENT_SECRET`. Anotar la fecha de vencimiento: hay que
-   renovarlo antes.
-4. **Permisos de API → Agregar un permiso → Microsoft Graph → Permisos de aplicación** → marcar
-   `Files.Read.All` y `Sites.Read.All` → **Agregar permisos** → **Conceder consentimiento de
-   administrador para Rethink** → Sí. Ambos deben quedar con ✓ verde "Concedido".
-
-Son permisos de **solo lectura**: el portal nunca modifica ni borra archivos en OneDrive. La
-app puede leer cualquier archivo de la organización, pero solo procesa las carpetas que un
-administrador del portal conecta. (Si TI prefiere limitarla a sitios concretos, se puede usar
-`Sites.Selected`; requiere asignar los sitios con PowerShell o Graph.)
+1. [console.cloud.google.com/projectcreate](https://console.cloud.google.com/projectcreate) →
+   nombre `rethink-whatsapp-bot` → **Crear**.
+2. Con ese proyecto seleccionado, habilita la API:
+   [console.cloud.google.com/apis/library/drive.googleapis.com](https://console.cloud.google.com/apis/library/drive.googleapis.com)
+   → **Habilitar**.
+3. [console.cloud.google.com/iam-admin/serviceaccounts](https://console.cloud.google.com/iam-admin/serviceaccounts)
+   → **Crear cuenta de servicio** → nombre `bot-drive` → **Crear y continuar** → (sin roles)
+   **Listo**.
+4. Abre la cuenta creada → pestaña **Claves** → **Agregar clave → Crear clave nueva → JSON**.
+   Se descarga un archivo `.json`. Guárdalo en un lugar seguro: es una contraseña.
+   - Si Google dice que la creación de claves está bloqueada por una política de la
+     organización (`iam.disableServiceAccountKeyCreation`), un administrador de Google
+     Workspace debe permitirla para este proyecto.
 
 ### 3. Variables en Vercel
 
-`MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET` (Secret) y `CRON_SECRET` (un valor
-aleatorio largo, Secret). Luego **Redeploy**.
+- `GOOGLE_SERVICE_ACCOUNT_JSON` (Secret): abre el `.json` con el Bloc de notas, copia **todo**
+  el contenido y pégalo como valor.
+- `CRON_SECRET` (Secret): un valor aleatorio largo (protege la sincronización diaria).
 
-### 4. Conectar carpetas
+Luego **Redeploy**.
 
-En OneDrive, sobre la carpeta: **Compartir → Copiar vínculo**. En el portal: **Administración →
-Carpetas de OneDrive → Conectar carpeta**, pegar el vínculo y elegir el nivel de acceso (y la
-empresa, si aplica). Se leen PDF, Word, TXT, Markdown y CSV de hasta 15 MB, con subcarpetas;
-el nombre de cada subcarpeta se usa como categoría.
+### 4. Compartir y conectar carpetas
+
+1. En el portal, **Carpetas sincronizadas** muestra el correo de la cuenta de servicio
+   (…@….iam.gserviceaccount.com).
+2. En Google Drive, clic derecho en la carpeta → **Compartir** → pega ese correo → rol
+   **Lector** → desmarca "Notificar" → **Compartir**.
+3. Copia la dirección de la carpeta (`https://drive.google.com/drive/folders/…`) y pégala en
+   **Conectar carpeta**, con el nivel de acceso (y la empresa, si aplica).
 
 En el plan Hobby de Vercel el cron corre una vez al día. Para revisar más seguido: plan Pro
 (cambiar `schedule` en `vercel.json`) o un servicio de cron externo (ej. cron-job.org) que
-llame `GET https://TU-DOMINIO/api/cron/onedrive-sync` con el header
+llame `GET https://TU-DOMINIO/api/cron/sync-carpetas` con el header
 `Authorization: Bearer CRON_SECRET`.
+
+### OneDrive / SharePoint (alternativa)
+
+El mismo mecanismo funciona con carpetas de OneDrive o SharePoint si un administrador de
+Microsoft 365 registra una aplicación en Entra ID con permisos de aplicación `Files.Read.All` y
+`Sites.Read.All` y se agregan `MS_TENANT_ID`, `MS_CLIENT_ID` y `MS_CLIENT_SECRET` en Vercel. El
+portal detecta el tipo por el enlace que se pega.
 
 ## Desarrollo local
 

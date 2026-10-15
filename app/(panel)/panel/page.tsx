@@ -4,7 +4,7 @@ import { requireAppUser } from "@/lib/auth";
 import { getBotSettings } from "@/lib/whatsapp/bot";
 import { whatsappConfigured } from "@/lib/whatsapp/cloud-api";
 import { embeddingsEnabled } from "@/lib/knowledge";
-import { onedriveConfigured } from "@/lib/onedrive/graph";
+import { gdriveConfigured } from "@/lib/sources/gdrive";
 import { cacheHitRate, dailySeries, getUsageSince, monthStart, sumUsage } from "@/lib/whatsapp/usage";
 import { formatUsd, modelLabel } from "@/lib/ai/models";
 import { BudgetMeter, Stat } from "@/components/whatsapp/Badges";
@@ -168,9 +168,9 @@ export default async function WhatsAppDashboardPage() {
               hint="Sin VOYAGE_API_KEY se usa solo búsqueda por texto completo."
             />
             <SetupItem
-              ok={onedriveConfigured()}
-              label="OneDrive (opcional)"
-              hint="Sin MS_TENANT_ID / MS_CLIENT_ID / MS_CLIENT_SECRET no se sincronizan carpetas."
+              ok={gdriveConfigured()}
+              label="Google Drive (opcional)"
+              hint="Sin GOOGLE_SERVICE_ACCOUNT_JSON no se sincronizan carpetas."
             />
             <SetupItem
               ok={(docsCount.count ?? 0) > 0}

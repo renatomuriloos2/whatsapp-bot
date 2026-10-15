@@ -1,22 +1,11 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { downloadFile, listFilesRecursive } from "@/lib/onedrive/graph";
 import { extractText, indexDocument } from "@/lib/knowledge";
-import { AccessLevel } from "@/types/database";
+import { downloadRemoteFile, listFiles } from "@/lib/sources";
+import type { KbSource } from "@/lib/sources/types";
 
 const SUPPORTED = /\.(pdf|docx|txt|md|markdown|csv|json)$/i;
 const MAX_BYTES = 15 * 1024 * 1024;
-
-export interface KbSource {
-  id: string;
-  name: string;
-  drive_id: string;
-  item_id: string;
-  access_level: AccessLevel;
-  company_id: string | null;
-  category: string | null;
-  enabled: boolean;
-}
 
 export interface SyncResult {
   added: number;
@@ -33,7 +22,7 @@ function titleFromName(name: string): string {
 }
 
 /**
- * Sincroniza una carpeta de OneDrive con la base de conocimiento:
+ * Sincroniza una carpeta (Google Drive u OneDrive) con la base de conocimiento:
  * agrega archivos nuevos, vuelve a leer los modificados (cambia su cTag) y
  * borra los documentos cuyos archivos ya no están. Se detiene al acercarse
  * a `deadline` para no pasar el límite de tiempo de Vercel; lo que falte se
@@ -48,7 +37,7 @@ export async function syncSource(
   const result: SyncResult = { added: 0, updated: 0, removed: 0, unchanged: 0, skipped: 0, failed: [], complete: true };
 
   try {
-    const files = await listFilesRecursive(source.drive_id, source.item_id);
+    const files = await listFiles(source);
 
     const { data: existingRows, error } = await supabase
       .from("kb_documents")
@@ -58,7 +47,7 @@ export async function syncSource(
     const existing = new Map((existingRows ?? []).map((r) => [r.external_id as string, r]));
 
     // 1) Borrar documentos cuyos archivos ya no están en la carpeta.
-    const seen = new Set(files.map((f) => f.item.id));
+    const seen = new Set(files.map((f) => f.id));
     const gone = (existingRows ?? []).filter((r) => !seen.has(r.external_id as string)).map((r) => r.id);
     if (gone.length > 0) {
       await supabase.from("kb_documents").delete().in("id", gone);
@@ -66,12 +55,13 @@ export async function syncSource(
     }
 
     // 2) Agregar o actualizar.
-    for (const { item, folderPath } of files) {
-      if (!SUPPORTED.test(item.name) || (item.size ?? 0) > MAX_BYTES) {
+    for (const item of files) {
+      const { folderPath } = item;
+      if (!SUPPORTED.test(item.name) || item.size > MAX_BYTES) {
         result.skipped++;
         continue;
       }
-      const version = item.cTag ?? item.eTag ?? "";
+      const version = item.version;
       const prev = existing.get(item.id);
       if (prev && prev.external_etag === version) {
         result.unchanged++;
@@ -83,7 +73,7 @@ export async function syncSource(
       }
 
       try {
-        const buffer = await downloadFile(source.drive_id, item.id);
+        const buffer = await downloadRemoteFile(source, item);
         const content = (await extractText(new File([buffer], item.name))).trim();
         if (!content) {
           result.failed.push(`${item.name}: sin texto (¿PDF escaneado?)`);
@@ -99,7 +89,7 @@ export async function syncSource(
           source_id: source.id,
           external_id: item.id,
           external_etag: version,
-          external_url: item.webUrl ?? null,
+          external_url: item.webUrl,
           updated_at: new Date().toISOString(),
         };
         const { data: doc, error: upsertError } = await supabase

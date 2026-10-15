@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useFormState, useFormStatus } from "react-dom";
-import { addSourceAction } from "@/lib/actions/onedrive";
+import { addSourceAction } from "@/lib/actions/sources";
 import { ActionState } from "@/lib/action-state";
 import { Company } from "@/types/database";
 import { CompanySelect, LevelSelect } from "@/components/whatsapp/LevelSelect";
@@ -47,13 +47,13 @@ export function AddSourceForm({ companies }: { companies: Pick<Company, "id" | "
     >
       <div>
         <label className="label" htmlFor="share_url">
-          Vínculo de la carpeta de OneDrive o SharePoint
+          Vínculo de la carpeta (Google Drive u OneDrive)
         </label>
         <input
           id="share_url"
           name="share_url"
           required
-          placeholder="https://rethink-my.sharepoint.com/:f:/g/personal/…"
+          placeholder="https://drive.google.com/drive/folders/…"
           className="input"
         />
       </div>

@@ -319,11 +319,13 @@ create policy "bot_settings admin update" on bot_settings
   for update using (is_admin()) with check (is_admin());
 
 -- ============================================================
--- ONEDRIVE / SHAREPOINT (carpetas sincronizadas)
+-- CARPETAS SINCRONIZADAS (Google Drive / OneDrive)
 -- ============================================================
 
 create table if not exists kb_sources (
   id uuid primary key default gen_random_uuid(),
+  -- gdrive = Google Drive, onedrive = OneDrive / SharePoint
+  provider text not null default 'gdrive' check (provider in ('gdrive', 'onedrive')),
   name text not null,
   share_url text not null,
   drive_id text not null,
@@ -342,6 +344,8 @@ create table if not exists kb_sources (
   created_at timestamptz not null default now(),
   unique (drive_id, item_id)
 );
+
+alter table kb_sources add column if not exists provider text not null default 'gdrive';
 
 alter table kb_documents add column if not exists source_id uuid references kb_sources(id) on delete cascade;
 alter table kb_documents add column if not exists external_id text;
