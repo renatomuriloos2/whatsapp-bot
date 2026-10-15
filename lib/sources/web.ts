@@ -124,8 +124,19 @@ class Reader {
       this.useBrowser = true; // poco texto: se arma con JavaScript
     }
     this.browser ??= await openBrowser();
-    const { html, finalUrl } = await renderPage(this.browser, url);
-    return pageFromHtml(html, finalUrl);
+    const { html, finalUrl, links } = await renderPage(this.browser, url);
+    const page = pageFromHtml(html, finalUrl);
+    // Lista de enlaces con el nombre visible más cercano (íconos de Canva).
+    const seenLinks = new Set<string>();
+    const lines: string[] = [];
+    for (const l of links) {
+      const key = `${l.label}|${l.href}`;
+      if (seenLinks.has(key) || l.href.startsWith(finalUrl.split("#")[0])) continue;
+      seenLinks.add(key);
+      lines.push(l.label ? `- ${l.label}: ${l.href}` : `- ${l.href}`);
+    }
+    if (lines.length) page.text += `\n\nEnlaces de esta página:\n${lines.join("\n")}`;
+    return page;
   }
 
   async close() {

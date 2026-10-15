@@ -16,21 +16,69 @@ export async function openBrowser(): Promise<Browser> {
   });
 }
 
-/** Abre la página, espera a que cargue y devuelve el HTML ya armado. */
-export async function renderPage(browser: Browser, url: string): Promise<{ html: string; finalUrl: string }> {
+// Se ejecuta dentro de la página. Va como texto (no como función) para que
+// el empaquetador no le agregue código auxiliar que no existe en el navegador.
+const COLLECT_LINKS = `(() => {
+  const clean = (t) => (t || "").replace(/\\s+/g, " ").trim();
+  const textEls = Array.from(document.querySelectorAll("h1,h2,h3,h4,h5,h6,p,span,li,div"))
+    .filter((el) => {
+      const t = clean(el.innerText);
+      if (!t || t.length > 120) return false;
+      return !Array.from(el.children).some((c) => clean(c.innerText) === t);
+    })
+    .map((el) => ({ el, text: clean(el.innerText), rect: el.getBoundingClientRect() }))
+    .filter((t) => t.rect.width > 0 && t.rect.height > 0);
+
+  return Array.from(document.querySelectorAll("a[href]"))
+    .filter((a) => /^(https?:|mailto:)/.test(a.href))
+    .map((a) => {
+      const img = a.querySelector("img");
+      let label = clean(a.innerText) || clean(a.getAttribute("aria-label")) || clean(a.title) || clean(img && img.alt);
+      const r = a.getBoundingClientRect();
+      if (!label && r.width > 0) {
+        let best = "";
+        let bestDistance = Infinity;
+        for (const t of textEls) {
+          if (a.contains(t.el) || t.el.contains(a)) continue;
+          const dx = Math.max(0, r.left - t.rect.right, t.rect.left - r.right);
+          const dy = Math.max(0, r.top - t.rect.bottom, t.rect.top - r.bottom);
+          if (dx + dy < bestDistance) { bestDistance = dx + dy; best = t.text; }
+        }
+        if (bestDistance < 160) label = best;
+      }
+      return { href: a.href, label };
+    });
+})()`;
+
+export interface RenderedLink {
+  href: string;
+  label: string;
+}
+
+/**
+ * Abre la página, espera a que cargue y devuelve el HTML ya armado, más la
+ * lista de enlaces con su nombre. En sitios como Canva el enlace suele estar
+ * en un ícono y el título es un texto aparte debajo: se le asigna al enlace
+ * el texto visible más cercano en pantalla.
+ */
+export async function renderPage(
+  browser: Browser,
+  url: string
+): Promise<{ html: string; finalUrl: string; links: RenderedLink[] }> {
   const page = await browser.newPage();
   try {
     await page.setViewport({ width: 1280, height: 900 });
     await page.goto(url, { waitUntil: "networkidle2", timeout: 25_000 });
     // Bajar hasta el final para que carguen las secciones diferidas.
-    await page.evaluate(async () => {
-      for (let y = 0; y < document.body.scrollHeight && y < 40_000; y += 700) {
+    await page.evaluate(`(async () => {
+      for (let y = 0; y < document.body.scrollHeight && y < 40000; y += 700) {
         window.scrollTo(0, y);
         await new Promise((r) => setTimeout(r, 80));
       }
-    });
+    })()`);
     await new Promise((r) => setTimeout(r, 500));
-    return { html: await page.content(), finalUrl: page.url() };
+    const links = (await page.evaluate(COLLECT_LINKS)) as RenderedLink[];
+    return { html: await page.content(), finalUrl: page.url(), links };
   } finally {
     await page.close().catch(() => {});
   }
