@@ -64,6 +64,7 @@ ${settings.instructions.trim()}
 - La base de conocimiento ya está filtrada según el nivel de acceso del contacto. Si el cliente pide algo que no aparece, puede ser información reservada: explica que un asesor puede ayudarle y no especules sobre su contenido.
 - Si la consulta implica un riesgo de seguridad (químicos peligrosos, fallas de calderas, intoxicaciones), da solo las indicaciones de seguridad generales que estén en la base de conocimiento y deriva de inmediato a un asesor.
 - Cuando la información incluye un enlace (formularios, documentos, procedimientos), escribe el enlace completo tal como aparece, para que la persona pueda abrirlo. Nunca inventes ni modifiques un enlace.
+- Pide datos personales (nombre, empresa, ciudad) solo si la persona quiere cotizar, comprar o que un asesor la contacte; nunca como condición para responder.
 - Usa derivar_a_asesor cuando el cliente pida hablar con una persona, quiera cotizar o comprar, tenga un reclamo o una emergencia, o cuando no puedas resolver su consulta.
 
 ## Formato WhatsApp
@@ -80,6 +81,11 @@ function contactNote(contact: ContactContext): string {
     `- Nivel de acceso: ${ACCESS_LEVEL_LABELS[contact.level]}`,
     contact.companyName ? `- Empresa cliente: ${contact.companyName}` : "- Empresa: no vinculado a ninguna empresa cliente",
   ];
+  if (contact.level === "confidencial") {
+    lines.push(
+      "- Es un contacto de confianza (puede ser personal interno de la empresa): responde directo, sin pedirle datos ni tratarlo como prospecto."
+    );
+  }
   return lines.join("\n");
 }
 

@@ -77,8 +77,38 @@ export async function renderPage(
       }
     })()`);
     await new Promise((r) => setTimeout(r, 500));
-    const links = (await page.evaluate(COLLECT_LINKS)) as RenderedLink[];
-    return { html: await page.content(), finalUrl: page.url(), links };
+    const links = new Map<string, RenderedLink>();
+    const addLinks = (found: RenderedLink[]) => {
+      for (const l of found) {
+        const prev = links.get(l.href);
+        if (!prev || (!prev.label && l.label)) links.set(l.href, l);
+      }
+    };
+    addLinks((await page.evaluate(COLLECT_LINKS)) as RenderedLink[]);
+
+    // Sitios de una sola página con secciones "#page-…" (Canva): las
+    // secciones ocultas no tienen posición en pantalla, así que se visita
+    // cada una para poder ponerle a sus íconos el título correcto.
+    const hashes = (await page.evaluate(`Array.from(new Set(
+      Array.from(document.querySelectorAll("a[href^='#']"))
+        .map((a) => a.getAttribute("href"))
+        .filter((h) => h && h.length > 1)
+    )).slice(0, 30)`)) as string[];
+    for (const hash of hashes) {
+      const h = JSON.stringify(hash);
+      await page.evaluate(`(async () => {
+        const target = Array.from(document.querySelectorAll("a[href^='#']")).find((a) => a.getAttribute("href") === ${h});
+        if (target) target.click(); else location.hash = ${h};
+        await new Promise((r) => setTimeout(r, 900));
+        for (let y = 0; y < document.body.scrollHeight && y < 40000; y += 700) {
+          window.scrollTo(0, y);
+          await new Promise((r) => setTimeout(r, 60));
+        }
+      })()`);
+      addLinks((await page.evaluate(COLLECT_LINKS)) as RenderedLink[]);
+    }
+
+    return { html: await page.content(), finalUrl: page.url(), links: Array.from(links.values()) };
   } finally {
     await page.close().catch(() => {});
   }
