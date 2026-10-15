@@ -102,6 +102,18 @@ async function fetchPage(url: string): Promise<Page> {
   return { url: res.url || url, title, text, links };
 }
 
+/**
+ * Texto (con enlaces) de una página guardada desde el navegador
+ * (Ctrl+S → "Página web completa"): sirve para sitios que arman su
+ * contenido con JavaScript, porque el navegador guarda la página ya armada.
+ */
+export function savedHtmlToText(html: string): string {
+  const root = parse(html, { blockTextElements: { script: false, style: false, noscript: false } });
+  const title = root.querySelector("title")?.text.trim();
+  const { text } = htmlToText(root.querySelector("body") ?? root, "about:blank");
+  return title ? `Página: ${title}\n\n${text}` : text;
+}
+
 /** Dirección base: solo se recorren páginas que empiecen con ella. */
 function baseOf(startUrl: string): string {
   const u = new URL(startUrl);

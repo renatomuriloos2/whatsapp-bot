@@ -87,11 +87,16 @@ export async function extractText(file: File): Promise<string> {
     return value;
   }
 
+  if (/\.html?$/.test(name)) {
+    const { savedHtmlToText } = await import("@/lib/sources/web");
+    return savedHtmlToText(new TextDecoder("utf-8").decode(buffer));
+  }
+
   if (/\.(txt|md|markdown|csv|json)$/.test(name)) {
     return new TextDecoder("utf-8").decode(buffer);
   }
 
-  throw new Error("Formato no soportado. Sube PDF, Word (.docx), TXT, Markdown o CSV.");
+  throw new Error("Formato no soportado. Sube PDF, Word (.docx), página web (.html), TXT, Markdown o CSV.");
 }
 
 // ---- Embeddings (opcionales, Voyage AI) ----------------------------------

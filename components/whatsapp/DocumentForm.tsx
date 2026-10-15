@@ -82,13 +82,13 @@ export function DocumentForm({
       {!editing && (
         <div>
           <label className="label" htmlFor="file">
-            Archivo (PDF, Word, TXT, Markdown o CSV — máx. 4 MB)
+            Archivo (PDF, Word, página web .html, TXT, Markdown o CSV — máx. 4 MB)
           </label>
           <input
             id="file"
             name="file"
             type="file"
-            accept=".pdf,.docx,.txt,.md,.markdown,.csv,.json"
+            accept=".pdf,.docx,.html,.htm,.txt,.md,.markdown,.csv,.json"
             className="input file:mr-3 file:rounded-md file:border-0 file:bg-rethink-orange/20 file:px-3 file:py-1 file:text-rethink-orange"
           />
         </div>
