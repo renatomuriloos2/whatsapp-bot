@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AccessLevel, BotSettings } from "@/types/database";
 import { ACCESS_LEVEL_LABELS, costUsd, supportsServerFallback, TokenUsage } from "@/lib/ai/models";
-import { searchKnowledge } from "@/lib/knowledge";
+import { KbMatch, searchKnowledge } from "@/lib/knowledge";
 
 const MAX_API_CALLS = 4;
 
@@ -59,8 +59,8 @@ ${settings.instructions.trim()}
 
 ## Cómo responder
 - Responde en el idioma del cliente (normalmente español), con tono cordial y profesional.
-- Antes de dar cualquier dato técnico (dosis, rangos, especificaciones, procedimientos, precios, fichas), búscalo con la herramienta buscar_conocimiento. Puedes buscar varias veces con distintas palabras si la primera búsqueda no alcanza.
-- Usa solo la información que devuelve buscar_conocimiento y lo que el cliente te dijo en la conversación. Si no encuentras el dato, dilo con honestidad y ofrece comunicarle con un asesor; nunca inventes cifras ni recomendaciones técnicas.
+- Junto a cada mensaje recibes los fragmentos de la base de conocimiento que el sistema encontró automáticamente para esa pregunta. Si alcanzan, responde directamente con ellos. Solo si no alcanzan o no son del tema, usa buscar_conocimiento con otras palabras (nombres de productos, equipos o parámetros).
+- Usa solo la información de esos fragmentos, la que devuelve buscar_conocimiento y lo que el cliente te dijo en la conversación. Si no encuentras el dato, dilo con honestidad y ofrece comunicarle con un asesor; nunca inventes cifras ni recomendaciones técnicas.
 - La base de conocimiento ya está filtrada según el nivel de acceso del contacto. Si el cliente pide algo que no aparece, puede ser información reservada: explica que un asesor puede ayudarle y no especules sobre su contenido.
 - Si la consulta implica un riesgo de seguridad (químicos peligrosos, fallas de calderas, intoxicaciones), da solo las indicaciones de seguridad generales que estén en la base de conocimiento y deriva de inmediato a un asesor.
 - Usa derivar_a_asesor cuando el cliente pida hablar con una persona, quiera cotizar o comprar, tenga un reclamo o una emergencia, o cuando no puedas resolver su consulta.
@@ -120,6 +120,12 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
   },
 ];
 
+function formatMatches(matches: KbMatch[]): string {
+  return matches
+    .map((m, i) => `[${i + 1}] Documento: ${m.title}${m.category ? ` (${m.category})` : ""}\n${m.content}`)
+    .join("\n\n---\n\n");
+}
+
 /** Convierte el historial en turnos válidos: empieza en user, alterna roles. */
 function buildMessages(history: HistoryTurn[], userText: string): Anthropic.Beta.BetaMessageParam[] {
   const turns: HistoryTurn[] = [];
@@ -152,9 +158,26 @@ export async function generateReply({
   const client = getClient();
   const started = Date.now();
 
+  const sources = new Set<string>();
+
+  // Búsqueda previa con el mensaje del cliente: en la mayoría de las
+  // preguntas evita una vuelta extra al modelo solo para decidir qué buscar
+  // (menos tokens y menos segundos). El modelo puede seguir buscando si no
+  // alcanza.
+  let prefetched = "";
+  try {
+    const matches = await searchKnowledge(adminClient, userText, contact.level, contact.companyId, 5);
+    matches.forEach((m) => sources.add(m.title));
+    prefetched = matches.length
+      ? `Fragmentos encontrados automáticamente para el último mensaje del cliente:\n\n${formatMatches(matches)}`
+      : "La búsqueda automática no encontró fragmentos para el último mensaje del cliente.";
+  } catch (err) {
+    console.error("[assistant] búsqueda previa falló:", err);
+  }
+
   const messages: Anthropic.Beta.BetaMessageParam[] = [
     ...buildMessages(history, userText),
-    { role: "system", content: contactNote(contact) },
+    { role: "system", content: [contactNote(contact), prefetched].filter(Boolean).join("\n\n") },
   ];
 
   const usage: TokenUsage = {
@@ -168,7 +191,6 @@ export async function generateReply({
   let toolCalls = 0;
   let escalation: string | null = null;
   let servedModel = settings.model;
-  const sources = new Set<string>();
   let response: Anthropic.Beta.BetaMessage | null = null;
 
   const fallback = supportsServerFallback(settings.model);
@@ -231,12 +253,7 @@ export async function generateReply({
             content:
               matches.length === 0
                 ? "No se encontró información sobre esto en la base de conocimiento."
-                : matches
-                    .map(
-                      (m, i) =>
-                        `[${i + 1}] Documento: ${m.title}${m.category ? ` (${m.category})` : ""}\n${m.content}`
-                    )
-                    .join("\n\n---\n\n"),
+                : formatMatches(matches),
           });
         } catch (err) {
           console.error("[assistant] búsqueda falló:", err);
