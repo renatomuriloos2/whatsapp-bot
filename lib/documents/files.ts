@@ -108,3 +108,60 @@ export async function downloadDocumentFile(
   }
   throw new Error("Este documento no tiene un archivo para enviar.");
 }
+
+const normalize = (t: string) =>
+  t.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+
+// Palabras de la petición que no ayudan a encontrar el archivo por nombre.
+const STOPWORDS = new Set([
+  "de", "del", "la", "el", "los", "las", "un", "una", "y", "o", "para", "por", "con", "en",
+  "me", "mi", "envie", "envia", "enviar", "mandar", "manda", "archivo", "documento", "pdf",
+]);
+
+/**
+ * Busca archivos enviables por su nombre (título o nombre de archivo), para
+ * cuando el cliente pide un documento concreto ("MSDS del Think2Base Cat 4")
+ * y la búsqueda por contenido no lo trae. Respeta nivel de acceso y empresa.
+ */
+export async function findDocumentsByName(
+  admin: SupabaseClient,
+  query: string,
+  level: AccessLevel,
+  companyId: string | null,
+  limit = 8
+): Promise<{ id: string; title: string; fileName: string | null }[]> {
+  const words = Array.from(
+    new Set(
+      normalize(query)
+        .split(/[^a-z0-9]+/)
+        .filter((w) => w && !STOPWORDS.has(w))
+    )
+  ).slice(0, 8);
+  if (words.length === 0) return [];
+
+  // Candidatos: títulos o nombres de archivo con alguna palabra larga.
+  const keys = words.filter((w) => w.length >= 3);
+  const filters = (keys.length ? keys : words).flatMap((w) => [`title.ilike.*${w}*`, `file_name.ilike.*${w}*`]);
+  const { data, error } = await admin
+    .from("kb_documents")
+    .select(DOC_FIELDS)
+    .eq("active", true)
+    .in("access_level", allowedLevels(level))
+    .or(filters.join(","))
+    .limit(300);
+  if (error) throw new Error(error.message);
+
+  return ((data ?? []) as unknown as DocRow[])
+    .filter((d) => hasFile(d) && (!d.company_id || d.company_id === companyId))
+    .map((d) => {
+      const name = normalize(`${d.title} ${d.file_name ?? ""}`);
+      const compact = name.replace(/[^a-z0-9]+/g, "");
+      // Cuenta las palabras presentes; "cat 4" también coincide con "CAT-4" o "cat4".
+      const score = words.filter((w) => name.split(/[^a-z0-9]+/).includes(w) || compact.includes(w)).length;
+      return { d, score };
+    })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map(({ d }) => ({ id: d.id, title: d.title, fileName: d.file_name }));
+}

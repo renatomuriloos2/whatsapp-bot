@@ -4,9 +4,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { AccessLevel, BotSettings } from "@/types/database";
 import { ACCESS_LEVEL_LABELS, costUsd, supportsServerFallback, TokenUsage } from "@/lib/ai/models";
 import { KbMatch, searchKnowledge } from "@/lib/knowledge";
-import { findSendableDocument, SendableDocument, sendableDocumentIds } from "@/lib/documents/files";
+import {
+  findDocumentsByName,
+  findSendableDocument,
+  SendableDocument,
+  sendableDocumentIds,
+} from "@/lib/documents/files";
 
-const MAX_API_CALLS = 4;
+const MAX_API_CALLS = 5;
 // Archivos que el bot puede adjuntar en una misma respuesta.
 const MAX_DOCUMENTS = 3;
 
@@ -69,7 +74,7 @@ ${settings.instructions.trim()}
 - La base de conocimiento ya está filtrada según el nivel de acceso del contacto. Si el cliente pide algo que no aparece, puede ser información reservada: explica que un asesor puede ayudarle y no especules sobre su contenido.
 - Si la consulta implica un riesgo de seguridad (químicos peligrosos, fallas de calderas, intoxicaciones), da solo las indicaciones de seguridad generales que estén en la base de conocimiento y deriva de inmediato a un asesor.
 - Cuando la información incluye un enlace (formularios, documentos, procedimientos), escribe el enlace completo tal como aparece, para que la persona pueda abrirlo. Nunca inventes ni modifiques un enlace.
-- Si la persona pide un archivo (ficha técnica, hoja de seguridad/MSDS, manual, certificado, formulario) y el documento aparece en los fragmentos con "[archivo enviable: id …]", usa enviar_documento con ese id: el archivo le llegará por WhatsApp justo después de tu mensaje, para que lo descargue. En tu respuesta di brevemente qué le envías (sin pegar enlaces de descarga). Envía solo lo que pidió, máximo ${MAX_DOCUMENTS} archivos. Si el documento no está marcado como enviable, comparte la información o el enlace que tengas.
+- Si la persona pide un archivo (ficha técnica, hoja de seguridad/MSDS, manual, certificado, formulario) y el documento aparece en los fragmentos con "[archivo enviable: id …]", usa enviar_documento con ese id: el archivo le llegará por WhatsApp justo después de tu mensaje, para que lo descargue. En tu respuesta di brevemente qué le envías (sin pegar enlaces de descarga). Envía solo lo que pidió, máximo ${MAX_DOCUMENTS} archivos. Si el archivo pedido no aparece marcado así en los fragmentos, usa buscar_archivo con el nombre del producto o documento antes de concluir que no lo tienes; solo si tampoco aparece ahí, dilo y ofrece un asesor.
 - Pide datos personales (nombre, empresa, ciudad) solo si la persona quiere cotizar, comprar o que un asesor la contacte; nunca como condición para responder.
 - Usa derivar_a_asesor cuando el cliente pida hablar con una persona, quiera cotizar o comprar, tenga un reclamo o una emergencia, o cuando no puedas resolver su consulta.
 
@@ -127,6 +132,23 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
         },
       },
       required: ["id"],
+      additionalProperties: false,
+    },
+    strict: true,
+  },
+  {
+    name: "buscar_archivo",
+    description:
+      "Busca archivos enviables por su nombre (ej. 'Think2Base Cat 4', 'MSDS cloro', 'manual osmosis'). Devuelve los archivos que coinciden con su id para usar en enviar_documento. Úsala cuando el cliente pida un archivo que no aparece en los fragmentos.",
+    input_schema: {
+      type: "object",
+      properties: {
+        nombre: {
+          type: "string",
+          description: "Nombre del producto o documento, tal como lo escribió el cliente (sin palabras como 'envíame').",
+        },
+      },
+      required: ["nombre"],
       additionalProperties: false,
     },
     strict: true,
@@ -304,6 +326,27 @@ export async function generateReply({
             type: "tool_result",
             tool_use_id: block.id,
             content: "La búsqueda falló temporalmente.",
+            is_error: true,
+          });
+        }
+      } else if (block.name === "buscar_archivo" && typeof input.nombre === "string") {
+        try {
+          const found = await findDocumentsByName(adminClient, input.nombre, contact.level, contact.companyId);
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: block.id,
+            content: found.length
+              ? found
+                  .map((f) => `- ${f.title}${f.fileName ? ` (${f.fileName})` : ""} [archivo enviable: id ${f.id}]`)
+                  .join("\n")
+              : "No hay archivos con ese nombre a los que este contacto tenga acceso.",
+          });
+        } catch (err) {
+          console.error("[assistant] búsqueda de archivos falló:", err);
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: block.id,
+            content: "La búsqueda de archivos falló temporalmente.",
             is_error: true,
           });
         }
