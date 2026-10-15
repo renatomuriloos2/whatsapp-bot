@@ -1,7 +1,9 @@
 import "server-only";
 import crypto from "node:crypto";
 import { parse, HTMLElement, Node, TextNode } from "node-html-parser";
+import type { Browser } from "puppeteer-core";
 import type { RemoteFile } from "@/lib/sources/types";
+import { openBrowser, renderPage } from "@/lib/sources/browser";
 
 // Importa un sitio web (ej. un portal hecho en Canva o Google Sites): recorre
 // sus páginas dentro de la misma dirección base y guarda el texto con los
@@ -9,6 +11,11 @@ import type { RemoteFile } from "@/lib/sources/types";
 // pueda responder con el enlace exacto.
 
 const MAX_PAGES = 60;
+// Menos texto que esto en la página "cruda" = el sitio se arma con
+// JavaScript (ej. Canva) y hay que abrirlo con el navegador interno.
+const MIN_TEXT = 200;
+// Tiempo máximo para recorrer el sitio (las funciones de Vercel duran 60 s).
+const CRAWL_BUDGET_MS = 35_000;
 const BLOCK = new Set([
   "p", "div", "section", "article", "header", "footer", "li", "ul", "ol", "tr", "table",
   "h1", "h2", "h3", "h4", "h5", "h6", "br", "hr", "main", "nav", "aside", "figure", "blockquote",
@@ -87,19 +94,53 @@ function htmlToText(root: HTMLElement, pageUrl: string): { text: string; links: 
   return { text, links };
 }
 
-async function fetchPage(url: string): Promise<Page> {
-  const res = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0 (compatible; RethinkBot/1.0)", Accept: "text/html" },
-    redirect: "follow",
-  });
-  if (!res.ok) throw new Error(`El sitio respondió ${res.status} en ${url}`);
-  const type = res.headers.get("content-type") ?? "";
-  if (!type.includes("html")) throw new Error(`${url} no es una página web (${type}).`);
-  const root = parse(await res.text(), { blockTextElements: { script: false, style: false, noscript: false } });
+function pageFromHtml(html: string, url: string): Page {
+  const root = parse(html, { blockTextElements: { script: false, style: false, noscript: false } });
   const title = root.querySelector("title")?.text.trim() || new URL(url).pathname;
   const body = root.querySelector("body") ?? root;
-  const { text, links } = htmlToText(body, res.url || url);
-  return { url: res.url || url, title, text, links };
+  const { text, links } = htmlToText(body, url);
+  return { url, title, text, links };
+}
+
+/**
+ * Estado de un recorrido: el navegador interno se abre solo si alguna página
+ * lo necesita, y se reutiliza para las siguientes.
+ */
+class Reader {
+  private browser: Browser | null = null;
+  private useBrowser = false;
+
+  async read(url: string): Promise<Page> {
+    if (!this.useBrowser) {
+      const res = await fetch(url, {
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; RethinkBot/1.0)", Accept: "text/html" },
+        redirect: "follow",
+      });
+      if (!res.ok) throw new Error(`El sitio respondió ${res.status} en ${url}`);
+      const type = res.headers.get("content-type") ?? "";
+      if (!type.includes("html")) throw new Error(`${url} no es una página web (${type}).`);
+      const page = pageFromHtml(await res.text(), res.url || url);
+      if (page.text.length >= MIN_TEXT) return page;
+      this.useBrowser = true; // poco texto: se arma con JavaScript
+    }
+    this.browser ??= await openBrowser();
+    const { html, finalUrl } = await renderPage(this.browser, url);
+    return pageFromHtml(html, finalUrl);
+  }
+
+  async close() {
+    await this.browser?.close().catch(() => {});
+    this.browser = null;
+  }
+}
+
+async function fetchPage(url: string): Promise<Page> {
+  const reader = new Reader();
+  try {
+    return await reader.read(url);
+  } finally {
+    await reader.close();
+  }
 }
 
 /**
@@ -137,46 +178,58 @@ export async function resolveWebsite(input: string) {
   const page = await fetchPage(url.toString());
   if (page.text.length < 40) {
     throw new Error(
-      "El sitio casi no tiene texto legible (puede que se genere con JavaScript o tenga contraseña). Alternativa: descárgalo como PDF y súbelo."
+      "No se encontró texto en el sitio, ni abriéndolo con el navegador interno. ¿Tiene contraseña? Ábrelo en una ventana privada para comprobarlo."
     );
   }
   return { driveId: "web", itemId: baseOf(url.toString()), name: page.title, webUrl: url.toString() };
 }
 
-export async function listWebPages(startUrl: string): Promise<RemoteFile[]> {
+export async function listWebPages(startUrl: string): Promise<RemoteFile[] & { partial?: boolean }> {
   const base = baseOf(startUrl);
   const queue = [startUrl];
   const seen = new Set<string>();
-  const files: RemoteFile[] = [];
+  const files: RemoteFile[] & { partial?: boolean } = [];
+  const reader = new Reader();
+  const deadline = Date.now() + CRAWL_BUDGET_MS;
 
-  while (queue.length > 0 && seen.size < MAX_PAGES) {
-    const url = queue.shift()!;
-    const key = url.replace(/\/$/, "");
-    if (seen.has(key)) continue;
-    seen.add(key);
+  try {
+    while (queue.length > 0 && seen.size < MAX_PAGES) {
+      if (Date.now() > deadline) {
+        // Sin tiempo para todo: lo que falta se lee en la próxima
+        // sincronización y no se borra nada por no haberlo visto.
+        files.partial = true;
+        break;
+      }
+      const url = queue.shift()!;
+      const key = url.replace(/\/$/, "");
+      if (seen.has(key)) continue;
+      seen.add(key);
 
-    let page: Page;
-    try {
-      page = await fetchPage(url);
-    } catch (err) {
-      if (files.length === 0) throw err; // la página inicial debe existir
-      continue;
+      let page: Page;
+      try {
+        page = await reader.read(url);
+      } catch (err) {
+        if (files.length === 0) throw err; // la página inicial debe existir
+        continue;
+      }
+      for (const link of page.links) {
+        if (link.startsWith(base) && !seen.has(link.replace(/\/$/, ""))) queue.push(link);
+      }
+      if (page.text.length < 40) continue;
+
+      const content = `Página: ${pageLabel(page, base)}\nDirección: ${page.url}\n\n${page.text}`;
+      pageCache.set(page.url, content);
+      files.push({
+        id: page.url,
+        name: `${pageLabel(page, base)}.md`,
+        version: crypto.createHash("sha1").update(content).digest("hex"),
+        size: content.length,
+        webUrl: page.url,
+        folderPath: [],
+      });
     }
-    for (const link of page.links) {
-      if (link.startsWith(base) && !seen.has(link.replace(/\/$/, ""))) queue.push(link);
-    }
-    if (page.text.length < 40) continue;
-
-    const content = `Página: ${pageLabel(page, base)}\nDirección: ${page.url}\n\n${page.text}`;
-    pageCache.set(page.url, content);
-    files.push({
-      id: page.url,
-      name: `${pageLabel(page, base)}.md`,
-      version: crypto.createHash("sha1").update(content).digest("hex"),
-      size: content.length,
-      webUrl: page.url,
-      folderPath: [],
-    });
+  } finally {
+    await reader.close();
   }
   return files;
 }

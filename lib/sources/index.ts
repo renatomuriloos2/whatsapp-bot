@@ -21,7 +21,7 @@ export async function resolveFolder(provider: SourceProvider, url: string) {
   return provider === "gdrive" ? resolveGdriveFolder(url) : resolveFolderUrl(url);
 }
 
-export async function listFiles(source: KbSource): Promise<RemoteFile[]> {
+export async function listFiles(source: KbSource): Promise<RemoteFile[] & { partial?: boolean }> {
   if (source.provider === "web") return listWebPages(source.item_id);
   if (source.provider === "gdrive") return listGdriveFiles(source.item_id);
   const items = await listFilesRecursive(source.drive_id, source.item_id);

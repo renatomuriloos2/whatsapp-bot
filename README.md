@@ -107,9 +107,11 @@ llame `GET https://TU-DOMINIO/api/cron/sync-carpetas` con el header
 En **Carpetas y sitios → Conectar**, pega la dirección del sitio (ej.
 `https://sgi-rethink.my.canva.site/sgi`). El portal recorre hasta 60 páginas que empiecen con
 esa dirección y guarda su texto **con los enlaces** ("Formulario X (https://…)"), para que el
-bot responda con el enlace exacto. Se revisa cada día como las carpetas. Si el sitio tiene
-contraseña o genera el texto solo con JavaScript, el portal avisa que no encontró texto: en ese
-caso, descárgalo como PDF (los enlaces del PDF también se leen) y súbelo.
+bot responda con el enlace exacto. Se revisa cada día como las carpetas. Los sitios que arman
+su contenido con JavaScript (como Canva) se abren con un navegador interno (Chromium, vía
+`@sparticuz/chromium`) que corre dentro de la propia función de Vercel; el contenido no se envía
+a servicios externos. Si el sitio tiene contraseña, el portal no puede leerlo: en ese caso,
+descárgalo como PDF o guarda la página (Ctrl+S) y súbela.
 
 Proyectos que ya corrieron `002_carpetas_sincronizadas.sql`: correr también
 [`supabase/migrations/003_sitios_web.sql`](./supabase/migrations/003_sitios_web.sql).

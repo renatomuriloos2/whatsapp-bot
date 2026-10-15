@@ -46,9 +46,14 @@ export async function syncSource(
     if (error) throw new Error(error.message);
     const existing = new Map((existingRows ?? []).map((r) => [r.external_id as string, r]));
 
-    // 1) Borrar documentos cuyos archivos ya no están en la carpeta.
+    // 1) Borrar documentos cuyos archivos ya no están en la carpeta (solo si
+    //    la lista está completa: si quedó a medias, no se sabe qué se borró).
+    const partial = (files as { partial?: boolean }).partial === true;
+    if (partial) result.complete = false;
     const seen = new Set(files.map((f) => f.id));
-    const gone = (existingRows ?? []).filter((r) => !seen.has(r.external_id as string)).map((r) => r.id);
+    const gone = partial
+      ? []
+      : (existingRows ?? []).filter((r) => !seen.has(r.external_id as string)).map((r) => r.id);
     if (gone.length > 0) {
       await supabase.from("kb_documents").delete().in("id", gone);
       result.removed = gone.length;
