@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { getAllCompanies } from "@/lib/data";
 import { DocumentForm } from "@/components/whatsapp/DocumentForm";
+import { BulkUploadForm } from "@/components/whatsapp/BulkUploadForm";
 import { AccessLevelBadge } from "@/components/whatsapp/Badges";
 import { toggleDocumentAction } from "@/lib/actions/whatsapp";
 import { formatDate } from "@/lib/utils";
@@ -23,7 +24,12 @@ export default async function ConocimientoPage({
     .order("updated_at", { ascending: false });
   if (q) query = query.or(`title.ilike.%${q.replace(/[%,()]/g, "")}%,category.ilike.%${q.replace(/[%,()]/g, "")}%`);
 
-  const [{ data }, companies] = await Promise.all([query, getAllCompanies(supabase)]);
+  const [{ data }, companies, { data: fileRows }] = await Promise.all([
+    query,
+    getAllCompanies(supabase),
+    supabase.from("kb_documents").select("file_name").not("file_name", "is", null),
+  ]);
+  const existingFileNames = (fileRows ?? []).map((r) => r.file_name as string);
   const docs = (data ?? []) as Omit<KbDocument, "content" | "description" | "created_by" | "created_at">[];
   const companyName = new Map(companies.map((c) => [c.id, c.name]));
 
@@ -35,6 +41,18 @@ export default async function ConocimientoPage({
         frecuentes. Cada documento tiene un nivel de acceso; el bot solo usa los documentos que el
         contacto puede ver.
       </p>
+
+      <details className="card mb-6">
+        <summary className="cursor-pointer text-sm font-medium text-rethink-cream">
+          Carga masiva — subir muchos archivos o una carpeta completa
+        </summary>
+        <p className="mb-4 mt-2 text-xs text-rethink-cream/50">
+          Cada archivo se convierte en un documento cuyo título es el nombre del archivo. Se omiten
+          los que ya están subidos (mismo nombre de archivo), los de más de 4 MB y los formatos no
+          soportados (Excel o PowerPoint: guárdalos antes como PDF o CSV).
+        </p>
+        <BulkUploadForm companies={companies} existingFileNames={existingFileNames} />
+      </details>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_360px]">
         <div className="card overflow-x-auto">
