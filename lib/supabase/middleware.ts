@@ -8,16 +8,19 @@ interface CookieToSet {
   options: CookieOptions;
 }
 
-// /api/whatsapp/* no usa sesión: Meta lo llama sin cookies y la ruta valida
-// la firma X-Hub-Signature-256 de cada petición.
-const PUBLIC_PATHS = ["/login", "/auth", "/api/whatsapp"];
+// /api/whatsapp/* y /api/cron/* no usan sesión: Meta y el cron los llaman
+// sin cookies. Cada ruta valida su propia credencial (firma de Meta o
+// Authorization: Bearer CRON_SECRET).
+const PUBLIC_PATHS = ["/login", "/auth", "/api/whatsapp", "/api/cron"];
 
 // Secciones que solo ve el rol admin (los agentes vuelven al panel).
-const ADMIN_ONLY = ["/costos", "/probar", "/configuracion", "/usuarios"];
+const ADMIN_ONLY = ["/costos", "/probar", "/configuracion", "/usuarios", "/onedrive"];
 
 export async function updateSession(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  if (pathname.startsWith("/api/whatsapp")) return NextResponse.next({ request });
+  if (pathname.startsWith("/api/whatsapp") || pathname.startsWith("/api/cron")) {
+    return NextResponse.next({ request });
+  }
 
   let response = NextResponse.next({ request });
 

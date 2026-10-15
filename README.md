@@ -48,6 +48,56 @@ información reservada nunca llega al modelo si el contacto no tiene permiso.
    campo `messages`. Pasa la app a modo Live.
 7. Entra a `https://TU-DOMINIO/login` con el administrador del paso 2.
 
+## Sincronizar con OneDrive / SharePoint (opcional)
+
+El portal puede leer carpetas de OneDrive o SharePoint de Microsoft 365 y mantener la base
+de conocimiento al día: cada día (cron de Vercel, 10:00 UTC) agrega archivos nuevos, vuelve a
+leer los modificados y quita los borrados. También hay un botón **Sincronizar ahora** en
+**Administración → Carpetas de OneDrive**.
+
+### 1. Base de datos (proyectos creados antes de esta función)
+
+Corre [`supabase/migrations/002_onedrive.sql`](./supabase/migrations/002_onedrive.sql) en el
+SQL Editor de Supabase. (En proyectos nuevos ya viene en `schema.sql`.)
+
+### 2. Registrar la aplicación en Microsoft (lo hace un administrador de Microsoft 365)
+
+1. Entrar a [entra.microsoft.com](https://entra.microsoft.com) → **Identidad → Aplicaciones →
+   Registros de aplicaciones → Nuevo registro**.
+   - Nombre: `Rethink WhatsApp Bot - OneDrive`
+   - Tipos de cuenta: **Solo cuentas de este directorio organizativo**
+   - URI de redirección: vacío → **Registrar**.
+2. En **Información general**, copiar **Id. de aplicación (cliente)** → `MS_CLIENT_ID` e
+   **Id. de directorio (inquilino)** → `MS_TENANT_ID`.
+3. **Certificados y secretos → Nuevo secreto de cliente** (vencimiento 24 meses) → copiar el
+   **Valor** (no el Id.) → `MS_CLIENT_SECRET`. Anotar la fecha de vencimiento: hay que
+   renovarlo antes.
+4. **Permisos de API → Agregar un permiso → Microsoft Graph → Permisos de aplicación** → marcar
+   `Files.Read.All` y `Sites.Read.All` → **Agregar permisos** → **Conceder consentimiento de
+   administrador para Rethink** → Sí. Ambos deben quedar con ✓ verde "Concedido".
+
+Son permisos de **solo lectura**: el portal nunca modifica ni borra archivos en OneDrive. La
+app puede leer cualquier archivo de la organización, pero solo procesa las carpetas que un
+administrador del portal conecta. (Si TI prefiere limitarla a sitios concretos, se puede usar
+`Sites.Selected`; requiere asignar los sitios con PowerShell o Graph.)
+
+### 3. Variables en Vercel
+
+`MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET` (Secret) y `CRON_SECRET` (un valor
+aleatorio largo, Secret). Luego **Redeploy**.
+
+### 4. Conectar carpetas
+
+En OneDrive, sobre la carpeta: **Compartir → Copiar vínculo**. En el portal: **Administración →
+Carpetas de OneDrive → Conectar carpeta**, pegar el vínculo y elegir el nivel de acceso (y la
+empresa, si aplica). Se leen PDF, Word, TXT, Markdown y CSV de hasta 15 MB, con subcarpetas;
+el nombre de cada subcarpeta se usa como categoría.
+
+En el plan Hobby de Vercel el cron corre una vez al día. Para revisar más seguido: plan Pro
+(cambiar `schedule` en `vercel.json`) o un servicio de cron externo (ej. cron-job.org) que
+llame `GET https://TU-DOMINIO/api/cron/onedrive-sync` con el header
+`Authorization: Bearer CRON_SECRET`.
+
 ## Desarrollo local
 
 ```bash

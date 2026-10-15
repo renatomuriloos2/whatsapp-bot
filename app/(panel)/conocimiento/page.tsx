@@ -20,7 +20,7 @@ export default async function ConocimientoPage({
 
   let query = supabase
     .from("kb_documents")
-    .select("id, title, category, access_level, company_id, file_name, active, chunk_count, has_embeddings, updated_at")
+    .select("id, title, category, access_level, company_id, file_name, active, chunk_count, has_embeddings, updated_at, source_id")
     .order("updated_at", { ascending: false });
   if (q) query = query.or(`title.ilike.%${q.replace(/[%,()]/g, "")}%,category.ilike.%${q.replace(/[%,()]/g, "")}%`);
 
@@ -30,7 +30,9 @@ export default async function ConocimientoPage({
     supabase.from("kb_documents").select("file_name").not("file_name", "is", null),
   ]);
   const existingFileNames = (fileRows ?? []).map((r) => r.file_name as string);
-  const docs = (data ?? []) as Omit<KbDocument, "content" | "description" | "created_by" | "created_at">[];
+  const docs = (data ?? []) as (Omit<KbDocument, "content" | "description" | "created_by" | "created_at"> & {
+    source_id: string | null;
+  })[];
   const companyName = new Map(companies.map((c) => [c.id, c.name]));
 
   return (
@@ -86,7 +88,7 @@ export default async function ConocimientoPage({
                     <td className="py-2 pr-4">
                       <p className="text-rethink-cream/90">{d.title}</p>
                       <p className="text-xs text-rethink-cream/50">
-                        {[d.category, d.file_name, d.company_id ? `Solo ${companyName.get(d.company_id) ?? "una empresa"}` : null]
+                        {[d.source_id ? "OneDrive" : null, d.category, d.file_name, d.company_id ? `Solo ${companyName.get(d.company_id) ?? "una empresa"}` : null]
                           .filter(Boolean)
                           .join(" · ") || "—"}
                       </p>
