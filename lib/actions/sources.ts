@@ -67,13 +67,21 @@ export async function addSourceAction(_prev: ActionState, formData: FormData): P
   return { error: null };
 }
 
-export async function syncSourceAction(formData: FormData) {
+/**
+ * Una ronda de sincronización. Devuelve `done: false` si quedaron archivos
+ * por procesar: el botón del portal vuelve a llamarla hasta terminar.
+ */
+export async function syncSourceAction(id: string): Promise<{ done: boolean; error?: string }> {
   await requireAppUser("admin");
   const admin = createAdminClient();
-  const { data: source } = await admin.from("kb_sources").select("*").eq("id", String(formData.get("id"))).single();
-  if (source) await syncSource(admin, source as KbSource, Date.now() + 45_000);
+  const { data: source } = await admin.from("kb_sources").select("*").eq("id", id).single();
+  if (!source) return { done: true, error: "No se encontró la carpeta." };
+  const result = await syncSource(admin, source as KbSource, Date.now() + 45_000);
   revalidatePath("/carpetas");
   revalidatePath("/conocimiento");
+  // Un error general (sin acceso, etc.) no se arregla repitiendo.
+  const fatal = !result.complete && result.added + result.updated === 0;
+  return { done: result.complete || fatal };
 }
 
 export async function toggleSourceAction(formData: FormData) {

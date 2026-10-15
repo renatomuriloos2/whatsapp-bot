@@ -6,6 +6,8 @@ import type { KbSource } from "@/lib/sources/types";
 
 const SUPPORTED = /\.(pdf|docx|html?|txt|md|markdown|csv|json)$/i;
 const MAX_BYTES = 15 * 1024 * 1024;
+// Archivos que se descargan e indexan al mismo tiempo.
+const CONCURRENCY = 5;
 
 export interface SyncResult {
   added: number;
@@ -59,30 +61,31 @@ export async function syncSource(
       result.removed = gone.length;
     }
 
-    // 2) Agregar o actualizar.
-    for (const item of files) {
-      const { folderPath } = item;
+    // 2) Agregar o actualizar: varios archivos a la vez para que una
+    //    carpeta grande entre en menos sincronizaciones.
+    const todo = files.filter((item) => {
       if (!SUPPORTED.test(item.name) || item.size > MAX_BYTES) {
         result.skipped++;
-        continue;
+        return false;
       }
+      const prev = existing.get(item.id);
+      if (prev && prev.external_etag === item.version) {
+        result.unchanged++;
+        return false;
+      }
+      return true;
+    });
+
+    const processFile = async (item: (typeof files)[number]) => {
+      const { folderPath } = item;
       const version = item.version;
       const prev = existing.get(item.id);
-      if (prev && prev.external_etag === version) {
-        result.unchanged++;
-        continue;
-      }
-      if (Date.now() > deadline) {
-        result.complete = false;
-        break;
-      }
-
       try {
         const buffer = await downloadRemoteFile(source, item);
         const content = (await extractText(new File([buffer], item.name))).trim();
         if (!content) {
           result.failed.push(`${item.name}: sin texto (¿PDF escaneado?)`);
-          continue;
+          return;
         }
         const fields = {
           title: titleFromName(item.name),
@@ -109,7 +112,22 @@ export async function syncSource(
       } catch (err) {
         result.failed.push(`${item.name}: ${err instanceof Error ? err.message : "error"}`);
       }
-    }
+    };
+
+    // El navegador interno de los sitios web no se comparte entre páginas.
+    const workers = source.provider === "web" ? 1 : CONCURRENCY;
+    let next = 0;
+    await Promise.all(
+      Array.from({ length: workers }, async () => {
+        while (next < todo.length) {
+          if (Date.now() > deadline) {
+            result.complete = false;
+            return;
+          }
+          await processFile(todo[next++]);
+        }
+      })
+    );
 
     const { count } = await supabase
       .from("kb_documents")
@@ -122,7 +140,7 @@ export async function syncSource(
       `${result.removed} eliminados`,
       `${result.unchanged} sin cambios`,
       result.skipped ? `${result.skipped} omitidos (formato o tamaño)` : null,
-      result.complete ? null : "faltan archivos: continuará en la próxima sincronización",
+      result.complete ? null : "faltan archivos: sigue automáticamente",
     ]
       .filter(Boolean)
       .join(" · ");

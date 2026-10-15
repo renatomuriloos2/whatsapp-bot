@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useFormState, useFormStatus } from "react-dom";
-import { addSourceAction } from "@/lib/actions/sources";
+import { addSourceAction, syncSourceAction } from "@/lib/actions/sources";
 import { ActionState } from "@/lib/action-state";
 import { Company } from "@/types/database";
 import { CompanySelect, LevelSelect } from "@/components/whatsapp/LevelSelect";
@@ -23,6 +24,36 @@ export function PendingButton({
   return (
     <button type="submit" disabled={pending} className={className}>
       {pending ? pendingText : children}
+    </button>
+  );
+}
+
+/**
+ * "Sincronizar ahora": repite rondas de sincronización (cada una dura menos
+ * de un minuto por el límite de Vercel) hasta que no falte ningún archivo.
+ */
+export function SyncButton({ id }: { id: string }) {
+  const router = useRouter();
+  const [round, setRound] = useState(0);
+
+  async function run() {
+    for (let i = 1; i <= 30; i++) {
+      setRound(i);
+      let done = true;
+      try {
+        done = (await syncSourceAction(id)).done;
+      } catch {
+        done = true;
+      }
+      router.refresh();
+      if (done) break;
+    }
+    setRound(0);
+  }
+
+  return (
+    <button type="button" onClick={run} disabled={round > 0} className="btn-secondary">
+      {round === 0 ? "Sincronizar ahora" : round === 1 ? "Sincronizando…" : `Sincronizando… (parte ${round})`}
     </button>
   );
 }

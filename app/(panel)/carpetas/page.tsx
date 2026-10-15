@@ -3,12 +3,11 @@ import { requireAppUser } from "@/lib/auth";
 import { getAllCompanies } from "@/lib/data";
 import { onedriveConfigured } from "@/lib/onedrive/graph";
 import { gdriveConfigured, gdriveServiceEmail } from "@/lib/sources/gdrive";
-import { AddSourceForm, PendingButton } from "@/components/whatsapp/FolderForms";
+import { AddSourceForm, PendingButton, SyncButton } from "@/components/whatsapp/FolderForms";
 import { AccessLevelBadge } from "@/components/whatsapp/Badges";
 import { CompanySelect, LevelSelect } from "@/components/whatsapp/LevelSelect";
 import {
   deleteSourceAction,
-  syncSourceAction,
   toggleSourceAction,
   updateSourceAccessAction,
 } from "@/lib/actions/sources";
@@ -107,10 +106,7 @@ export default async function CarpetasPage() {
                   </p>
                 </div>
                 <div className="flex gap-2">
-                  <form action={syncSourceAction}>
-                    <input type="hidden" name="id" value={s.id} />
-                    <PendingButton pendingText="Sincronizando…">Sincronizar ahora</PendingButton>
-                  </form>
+                  <SyncButton id={s.id} />
                   <form action={toggleSourceAction}>
                     <input type="hidden" name="id" value={s.id} />
                     <input type="hidden" name="enabled" value={String(!s.enabled)} />
