@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/sync-carpetas",
+      "schedule": "0 10 * * *"
+    }
+  ]
+}
