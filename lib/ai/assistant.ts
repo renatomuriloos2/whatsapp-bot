@@ -4,8 +4,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { AccessLevel, BotSettings } from "@/types/database";
 import { ACCESS_LEVEL_LABELS, costUsd, supportsServerFallback, TokenUsage } from "@/lib/ai/models";
 import { KbMatch, searchKnowledge } from "@/lib/knowledge";
+import { findSendableDocument, SendableDocument, sendableDocumentIds } from "@/lib/documents/files";
 
 const MAX_API_CALLS = 4;
+// Archivos que el bot puede adjuntar en una misma respuesta.
+const MAX_DOCUMENTS = 3;
 
 export interface ContactContext {
   name: string | null;
@@ -32,6 +35,8 @@ export interface AssistantReply {
   latencyMs: number;
   stopReason: string | null;
   sources: string[];
+  /** Archivos que el bot decidió enviar (se mandan después del texto). */
+  documents: SendableDocument[];
 }
 
 let anthropic: Anthropic | null = null;
@@ -64,6 +69,7 @@ ${settings.instructions.trim()}
 - La base de conocimiento ya está filtrada según el nivel de acceso del contacto. Si el cliente pide algo que no aparece, puede ser información reservada: explica que un asesor puede ayudarle y no especules sobre su contenido.
 - Si la consulta implica un riesgo de seguridad (químicos peligrosos, fallas de calderas, intoxicaciones), da solo las indicaciones de seguridad generales que estén en la base de conocimiento y deriva de inmediato a un asesor.
 - Cuando la información incluye un enlace (formularios, documentos, procedimientos), escribe el enlace completo tal como aparece, para que la persona pueda abrirlo. Nunca inventes ni modifiques un enlace.
+- Si la persona pide un archivo (ficha técnica, hoja de seguridad/MSDS, manual, certificado, formulario) y el documento aparece en los fragmentos con "[archivo enviable: id …]", usa enviar_documento con ese id: el archivo le llegará por WhatsApp justo después de tu mensaje, para que lo descargue. En tu respuesta di brevemente qué le envías (sin pegar enlaces de descarga). Envía solo lo que pidió, máximo ${MAX_DOCUMENTS} archivos. Si el documento no está marcado como enviable, comparte la información o el enlace que tengas.
 - Pide datos personales (nombre, empresa, ciudad) solo si la persona quiere cotizar, comprar o que un asesor la contacte; nunca como condición para responder.
 - Usa derivar_a_asesor cuando el cliente pida hablar con una persona, quiera cotizar o comprar, tenga un reclamo o una emergencia, o cuando no puedas resolver su consulta.
 
@@ -109,6 +115,23 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
     strict: true,
   },
   {
+    name: "enviar_documento",
+    description:
+      "Envía al cliente por WhatsApp el archivo original de un documento de la base de conocimiento (PDF, Word, Excel…), para que lo descargue. Solo sirve con documentos marcados en los fragmentos como \"[archivo enviable: id …]\". Úsala cuando el cliente pida el archivo o documento.",
+    input_schema: {
+      type: "object",
+      properties: {
+        id: {
+          type: "string",
+          description: "El id que aparece en \"[archivo enviable: id …]\" del documento a enviar.",
+        },
+      },
+      required: ["id"],
+      additionalProperties: false,
+    },
+    strict: true,
+  },
+  {
     name: "derivar_a_asesor",
     description:
       "Avisa al equipo humano para que tome la conversación. Úsala cuando el cliente pida una persona, quiera cotizar/comprar, tenga un reclamo o emergencia, o no puedas resolver su consulta. Después de usarla, dile al cliente que un asesor le escribirá.",
@@ -127,10 +150,30 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
   },
 ];
 
-function formatMatches(matches: KbMatch[]): string {
+function formatMatches(matches: KbMatch[], sendable: Set<string>): string {
   return matches
-    .map((m, i) => `[${i + 1}] Documento: ${m.title}${m.category ? ` (${m.category})` : ""}\n${m.content}`)
+    .map((m, i) => {
+      const file = sendable.has(m.document_id) ? ` [archivo enviable: id ${m.document_id}]` : "";
+      return `[${i + 1}] Documento: ${m.title}${m.category ? ` (${m.category})` : ""}${file}\n${m.content}`;
+    })
     .join("\n\n---\n\n");
+}
+
+/** Búsqueda + marca de qué documentos tienen un archivo que se puede enviar. */
+async function searchWithFiles(
+  adminClient: SupabaseClient,
+  query: string,
+  contact: ContactContext,
+  limit?: number
+): Promise<{ matches: KbMatch[]; text: string }> {
+  const matches = await searchKnowledge(adminClient, query, contact.level, contact.companyId, limit);
+  let sendable = new Set<string>();
+  try {
+    sendable = await sendableDocumentIds(adminClient, Array.from(new Set(matches.map((m) => m.document_id))));
+  } catch (err) {
+    console.error("[assistant] no se pudo ver qué archivos son enviables:", err);
+  }
+  return { matches, text: formatMatches(matches, sendable) };
 }
 
 /** Convierte el historial en turnos válidos: empieza en user, alterna roles. */
@@ -166,6 +209,7 @@ export async function generateReply({
   const started = Date.now();
 
   const sources = new Set<string>();
+  const documents: SendableDocument[] = [];
 
   // Búsqueda previa con el mensaje del cliente: en la mayoría de las
   // preguntas evita una vuelta extra al modelo solo para decidir qué buscar
@@ -173,10 +217,10 @@ export async function generateReply({
   // alcanza.
   let prefetched = "";
   try {
-    const matches = await searchKnowledge(adminClient, userText, contact.level, contact.companyId, 5);
+    const { matches, text } = await searchWithFiles(adminClient, userText, contact, 5);
     matches.forEach((m) => sources.add(m.title));
     prefetched = matches.length
-      ? `Fragmentos encontrados automáticamente para el último mensaje del cliente:\n\n${formatMatches(matches)}`
+      ? `Fragmentos encontrados automáticamente para el último mensaje del cliente:\n\n${text}`
       : "La búsqueda automática no encontró fragmentos para el último mensaje del cliente.";
   } catch (err) {
     console.error("[assistant] búsqueda previa falló:", err);
@@ -247,20 +291,12 @@ export async function generateReply({
 
       if (block.name === "buscar_conocimiento" && typeof input.consulta === "string") {
         try {
-          const matches = await searchKnowledge(
-            adminClient,
-            input.consulta,
-            contact.level,
-            contact.companyId
-          );
+          const { matches, text } = await searchWithFiles(adminClient, input.consulta, contact);
           matches.forEach((m) => sources.add(m.title));
           toolResults.push({
             type: "tool_result",
             tool_use_id: block.id,
-            content:
-              matches.length === 0
-                ? "No se encontró información sobre esto en la base de conocimiento."
-                : formatMatches(matches),
+            content: matches.length === 0 ? "No se encontró información sobre esto en la base de conocimiento." : text,
           });
         } catch (err) {
           console.error("[assistant] búsqueda falló:", err);
@@ -271,6 +307,27 @@ export async function generateReply({
             is_error: true,
           });
         }
+      } else if (block.name === "enviar_documento" && typeof input.id === "string") {
+        const id = input.id.trim();
+        let content: string;
+        let isError = false;
+        if (documents.some((d) => d.id === id)) {
+          content = "Ese archivo ya está en la lista para enviar.";
+        } else if (documents.length >= MAX_DOCUMENTS) {
+          content = `Ya hay ${MAX_DOCUMENTS} archivos para enviar en esta respuesta; no se agregan más.`;
+          isError = true;
+        } else {
+          // El permiso se vuelve a verificar aquí: no basta con que el modelo tenga el id.
+          const doc = await findSendableDocument(adminClient, id, contact.level, contact.companyId).catch(() => null);
+          if (doc) {
+            documents.push(doc);
+            content = `Listo: "${doc.title}" se enviará como archivo justo después de tu mensaje.`;
+          } else {
+            content = "Ese documento no existe, no tiene archivo o este contacto no tiene acceso a él.";
+            isError = true;
+          }
+        }
+        toolResults.push({ type: "tool_result", tool_use_id: block.id, content, is_error: isError });
       } else if (block.name === "derivar_a_asesor" && typeof input.motivo === "string") {
         escalation = input.motivo;
         toolResults.push({
@@ -311,5 +368,6 @@ export async function generateReply({
     latencyMs: Date.now() - started,
     stopReason: response?.stop_reason ?? null,
     sources: Array.from(sources),
+    documents: refused ? [] : documents,
   };
 }

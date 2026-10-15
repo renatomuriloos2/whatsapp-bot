@@ -362,3 +362,11 @@ create policy "kb_sources staff select" on kb_sources
 drop policy if exists "kb_sources admin write" on kb_sources;
 create policy "kb_sources admin write" on kb_sources
   for all using (is_admin()) with check (is_admin());
+-- descargan de Drive al momento de enviarlos.
+
+alter table kb_documents add column if not exists storage_path text;
+
+-- Bucket privado: solo el servidor (service_role) lee y escribe en él.
+insert into storage.buckets (id, name, public)
+values ('documentos', 'documentos', false)
+on conflict (id) do nothing;

@@ -179,3 +179,30 @@ export async function downloadGdriveFile(file: RemoteFile): Promise<ArrayBuffer>
     : await driveFetch(`/files/${file.id}?alt=media&supportsAllDrives=true`);
   return res.arrayBuffer();
 }
+
+// Al enviar un documento de Google (Docs, Hojas, Presentaciones) por
+// WhatsApp se exporta en un formato que la persona pueda abrir en el celular.
+const SEND_EXPORTS: Record<string, { mime: string; ext: string }> = {
+  "application/vnd.google-apps.document": { mime: "application/pdf", ext: ".pdf" },
+  "application/vnd.google-apps.presentation": { mime: "application/pdf", ext: ".pdf" },
+  "application/vnd.google-apps.spreadsheet": {
+    mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ext: ".xlsx",
+  },
+};
+
+/** El archivo original (no el texto) para enviarlo tal cual por WhatsApp. */
+export async function downloadGdriveOriginal(
+  fileId: string
+): Promise<{ data: ArrayBuffer; fileName: string; mimeType: string }> {
+  const meta = (await (
+    await driveFetch(`/files/${fileId}?fields=name,mimeType&supportsAllDrives=true`)
+  ).json()) as { name: string; mimeType: string };
+  const exported = SEND_EXPORTS[meta.mimeType];
+  if (exported) {
+    const res = await driveFetch(`/files/${fileId}/export?mimeType=${encodeURIComponent(exported.mime)}`);
+    return { data: await res.arrayBuffer(), fileName: `${meta.name}${exported.ext}`, mimeType: exported.mime };
+  }
+  const res = await driveFetch(`/files/${fileId}?alt=media&supportsAllDrives=true`);
+  return { data: await res.arrayBuffer(), fileName: meta.name, mimeType: meta.mimeType };
+}

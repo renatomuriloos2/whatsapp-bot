@@ -2,7 +2,8 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { BotSettings, WaContact } from "@/types/database";
 import { generateReply, HistoryTurn } from "@/lib/ai/assistant";
-import { markReadWithTyping, sendText } from "@/lib/whatsapp/cloud-api";
+import { markReadWithTyping, sendDocument, sendText } from "@/lib/whatsapp/cloud-api";
+import { downloadDocumentFile, SendableDocument } from "@/lib/documents/files";
 
 export async function getBotSettings(supabase: SupabaseClient): Promise<BotSettings> {
   const { data, error } = await supabase.from("bot_settings").select("*").eq("id", 1).single();
@@ -86,6 +87,40 @@ async function sendAndLog(
     .from("wa_contacts")
     .update({ last_message_at: new Date().toISOString() })
     .eq("id", contact.id);
+}
+
+/** Envía los archivos que pidió el cliente; si alguno falla, avisa y marca la conversación. */
+async function sendDocuments(supabase: SupabaseClient, contact: WaContact, documents: SendableDocument[]) {
+  const failed: string[] = [];
+  for (const doc of documents) {
+    try {
+      const file = await downloadDocumentFile(supabase, doc.id);
+      // WhatsApp acepta documentos de hasta 100 MB.
+      if (file.data.byteLength > 100 * 1024 * 1024) throw new Error("pesa más de 100 MB");
+      const id = await sendDocument(contact.phone, file);
+      await supabase.from("wa_messages").insert({
+        contact_id: contact.id,
+        direction: "out",
+        sender: "bot",
+        body: `📎 ${file.fileName}`,
+        message_type: "document",
+        wa_message_id: id,
+        status: "sent",
+      });
+    } catch (err) {
+      console.error(`[bot] no se pudo enviar "${doc.title}":`, err);
+      failed.push(doc.title);
+    }
+  }
+  if (failed.length > 0) {
+    await sendAndLog(
+      supabase,
+      contact,
+      `No pude adjuntar ${failed.length === 1 ? "el archivo" : "los archivos"} ${failed.map((t) => `"${t}"`).join(", ")} 😕 Un asesor te lo enviará en breve.`,
+      "sistema"
+    );
+    await flagAttention(supabase, contact.id, `No se pudo enviar: ${failed.join(", ")}`);
+  }
 }
 
 async function flagAttention(supabase: SupabaseClient, contactId: string, reason: string) {
@@ -233,8 +268,11 @@ export async function handleIncomingMessage(
 
   if (reply.text) {
     await sendAndLog(supabase, contact, reply.text, "bot");
-  } else {
+  } else if (reply.documents.length === 0) {
     await sendAndLog(supabase, contact, settings.handoff_message, "sistema");
+  }
+  if (reply.documents.length > 0) {
+    await sendDocuments(supabase, contact, reply.documents);
   }
 
   if (reply.escalation) {

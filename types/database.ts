@@ -29,6 +29,7 @@ export interface KbDocument {
   access_level: AccessLevel;
   company_id: string | null;
   file_name: string | null;
+  storage_path?: string | null;
   content: string;
   active: boolean;
   chunk_count: number;

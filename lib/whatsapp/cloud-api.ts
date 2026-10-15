@@ -79,6 +79,43 @@ export async function sendText(to: string, text: string): Promise<string[]> {
   return ids;
 }
 
+/** Sube un archivo a WhatsApp y devuelve su id de media (válido por 30 días). */
+async function uploadMedia(data: ArrayBuffer, fileName: string, mimeType: string): Promise<string> {
+  const form = new FormData();
+  form.set("messaging_product", "whatsapp");
+  form.set("type", mimeType);
+  form.set("file", new Blob([data], { type: mimeType }), fileName);
+  const res = await fetch(
+    `https://graph.facebook.com/${GRAPH_VERSION}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/media`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}` },
+      body: form,
+    }
+  );
+  if (!res.ok) throw new Error(`WhatsApp media ${res.status}: ${await res.text()}`);
+  const json = (await res.json()) as { id?: string };
+  if (!json.id) throw new Error("WhatsApp no devolvió el id del archivo subido.");
+  return json.id;
+}
+
+/** Envía un archivo como documento descargable. Devuelve el wamid. */
+export async function sendDocument(
+  to: string,
+  file: { data: ArrayBuffer; fileName: string; mimeType: string },
+  caption?: string
+): Promise<string | null> {
+  const mediaId = await uploadMedia(file.data, file.fileName, file.mimeType);
+  const res = await graphPost({
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to,
+    type: "document",
+    document: { id: mediaId, filename: file.fileName, ...(caption ? { caption } : {}) },
+  });
+  return res.messages?.[0]?.id ?? null;
+}
+
 /**
  * Marca el mensaje como leído (doble check azul) y muestra "escribiendo…"
  * mientras el bot prepara la respuesta. Es cosmético: si falla, se ignora.

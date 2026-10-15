@@ -10,6 +10,7 @@ import { ACCESS_LEVELS, BOT_MODELS, EFFORT_OPTIONS } from "@/lib/ai/models";
 import { extractText, indexDocument } from "@/lib/knowledge";
 import { generateReply, HistoryTurn } from "@/lib/ai/assistant";
 import { getBotSettings } from "@/lib/whatsapp/bot";
+import { mimeFromName, STORAGE_BUCKET } from "@/lib/documents/files";
 import { sendText, whatsappConfigured } from "@/lib/whatsapp/cloud-api";
 import { AccessLevel, ContactStatus } from "@/types/database";
 
@@ -85,6 +86,22 @@ export async function createDocumentAction(
     if (error) return { error: error.message };
 
     await indexDocument(supabase, doc);
+
+    // Se guarda el archivo original para que el bot pueda enviarlo por WhatsApp.
+    if (file instanceof File && file.size > 0 && fileName) {
+      try {
+        const admin = createAdminClient();
+        const path = `${doc.id}/${fileName.replace(/[^\w.\- ]+/g, "_")}`;
+        const { error: uploadError } = await admin.storage
+          .from(STORAGE_BUCKET)
+          .upload(path, file, { contentType: mimeFromName(fileName), upsert: true });
+        if (uploadError) throw new Error(uploadError.message);
+        await admin.from("kb_documents").update({ storage_path: path }).eq("id", doc.id);
+      } catch (err) {
+        // El documento ya sirve para responder; solo no se podrá enviar como archivo.
+        console.error("[documentos] no se pudo guardar el archivo original:", err);
+      }
+    }
     revalidatePath("/conocimiento");
   } catch (err) {
     if (isRedirectError(err)) throw err;
@@ -145,7 +162,12 @@ export async function toggleDocumentAction(formData: FormData) {
 export async function deleteDocumentAction(formData: FormData) {
   await requireAppUser();
   const supabase = createClient();
-  await supabase.from("kb_documents").delete().eq("id", String(formData.get("id")));
+  const id = String(formData.get("id"));
+  const { data: doc } = await supabase.from("kb_documents").select("storage_path").eq("id", id).maybeSingle();
+  await supabase.from("kb_documents").delete().eq("id", id);
+  if (doc?.storage_path) {
+    await createAdminClient().storage.from(STORAGE_BUCKET).remove([doc.storage_path]);
+  }
   revalidatePath("/conocimiento");
   redirect("/conocimiento");
 }
@@ -416,7 +438,13 @@ export async function testBotAction(prev: TestBotState, formData: FormData): Pro
       history: [
         ...prev.history,
         { role: "user", text: message },
-        { role: "assistant", text: reply.text || `(${settings.handoff_message})` },
+        {
+          role: "assistant",
+          text:
+            [reply.text, ...reply.documents.map((d) => `📎 (se enviaría el archivo: ${d.title})`)]
+              .filter(Boolean)
+              .join("\n\n") || `(${settings.handoff_message})`,
+        },
       ],
       last: {
         model: reply.model,

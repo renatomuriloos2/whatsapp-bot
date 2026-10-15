@@ -123,6 +123,20 @@ Microsoft 365 registra una aplicación en Entra ID con permisos de aplicación `
 `Sites.Read.All` y se agregan `MS_TENANT_ID`, `MS_CLIENT_ID` y `MS_CLIENT_SECRET` en Vercel. El
 portal detecta el tipo por el enlace que se pega.
 
+## Enviar archivos por WhatsApp
+
+Cuando un cliente pide un archivo ("mándame la hoja de seguridad del X"), el bot
+lo envía como documento descargable justo después de su respuesta. Puede enviar:
+
+- Archivos de carpetas de Google Drive / OneDrive conectadas (se descargan de
+  Drive en ese momento; los Documentos de Google van como PDF y las Hojas como Excel).
+- Archivos subidos desde el portal **después** de correr
+  `supabase/migrations/004_archivos_enviables.sql` (se guardan en el bucket
+  privado `documentos` de Supabase Storage).
+
+El sistema verifica el nivel de acceso y la empresa del contacto antes de enviar
+cada archivo; las páginas de sitios web no se envían como archivo.
+
 ## Desarrollo local
 
 ```bash
