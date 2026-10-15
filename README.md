@@ -102,6 +102,18 @@ En el plan Hobby de Vercel el cron corre una vez al día. Para revisar más segu
 llame `GET https://TU-DOMINIO/api/cron/sync-carpetas` con el header
 `Authorization: Bearer CRON_SECRET`.
 
+### Sitios web (ej. portal del SGI en Canva o Google Sites)
+
+En **Carpetas y sitios → Conectar**, pega la dirección del sitio (ej.
+`https://sgi-rethink.my.canva.site/sgi`). El portal recorre hasta 60 páginas que empiecen con
+esa dirección y guarda su texto **con los enlaces** ("Formulario X (https://…)"), para que el
+bot responda con el enlace exacto. Se revisa cada día como las carpetas. Si el sitio tiene
+contraseña o genera el texto solo con JavaScript, el portal avisa que no encontró texto: en ese
+caso, descárgalo como PDF (los enlaces del PDF también se leen) y súbelo.
+
+Proyectos que ya corrieron `002_carpetas_sincronizadas.sql`: correr también
+[`supabase/migrations/003_sitios_web.sql`](./supabase/migrations/003_sitios_web.sql).
+
 ### OneDrive / SharePoint (alternativa)
 
 El mismo mecanismo funciona con carpetas de OneDrive o SharePoint si un administrador de

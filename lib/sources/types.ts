@@ -1,6 +1,6 @@
 import type { AccessLevel } from "@/types/database";
 
-export type SourceProvider = "gdrive" | "onedrive";
+export type SourceProvider = "gdrive" | "onedrive" | "web";
 
 export interface KbSource {
   id: string;

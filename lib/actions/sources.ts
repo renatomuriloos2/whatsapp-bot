@@ -19,10 +19,10 @@ export async function addSourceAction(_prev: ActionState, formData: FormData): P
   try {
     await requireAppUser("admin");
     const shareUrl = String(formData.get("share_url") ?? "").trim();
-    if (!shareUrl) return { error: "Pega el vínculo de la carpeta." };
+    if (!shareUrl) return { error: "Pega el vínculo de la carpeta o la dirección del sitio." };
     const provider = detectProvider(shareUrl);
     if (!provider) {
-      return { error: "No reconozco el enlace. Debe ser de una carpeta de Google Drive (drive.google.com) u OneDrive." };
+      return { error: "No reconozco el enlace. Pega la dirección de una carpeta de Google Drive o de un sitio web (empieza con https://)." };
     }
     if (!providerConfigured(provider)) {
       return {

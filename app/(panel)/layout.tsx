@@ -13,7 +13,7 @@ export default async function PanelLayout({ children }: { children: React.ReactN
     ...(isAdmin
       ? [
           { group: "Administración" },
-          { href: "/carpetas", label: "Carpetas sincronizadas" },
+          { href: "/carpetas", label: "Carpetas y sitios" },
           { href: "/costos", label: "Costos de IA" },
           { href: "/probar", label: "Probar el bot" },
           { href: "/configuracion", label: "Configuración" },

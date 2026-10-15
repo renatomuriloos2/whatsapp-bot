@@ -21,25 +21,35 @@ export function chunkText(text: string): string[] {
   const pushCurrent = () => {
     if (current.trim()) chunks.push(current.trim());
   };
+  // El solape empieza en un límite de palabra, para no copiar medio enlace.
+  const overlap = () => {
+    const tail = current.slice(-CHUNK_OVERLAP);
+    const cut = tail.search(/\s/);
+    return cut >= 0 ? tail.slice(cut + 1) : "";
+  };
 
   for (const para of paragraphs) {
-    // Párrafos muy largos (ej. PDFs sin saltos) se cortan por oraciones.
+    // Párrafos muy largos (ej. PDFs sin saltos) se cortan por líneas u
+    // oraciones. Solo se corta tras un punto seguido de espacio, para no
+    // partir direcciones web como "docs.google.com".
     const pieces =
-      para.length > CHUNK_SIZE ? para.match(/[^.!?\n]+[.!?]*\s*/g) ?? [para] : [para];
+      para.length > CHUNK_SIZE ? para.split(/(?<=[.!?])\s+|\n/).filter((p) => p.trim()) : [para];
 
-    for (const piece of pieces) {
+    pieces.forEach((piece, i) => {
+      // Las partes de un mismo párrafo se unen con espacio; párrafos distintos, con línea en blanco.
+      const sep = i === 0 ? "\n\n" : " ";
       if (current && current.length + piece.length + 2 > CHUNK_SIZE) {
         pushCurrent();
-        current = current.slice(-CHUNK_OVERLAP) + "\n\n" + piece;
+        current = overlap() + sep + piece;
       } else {
-        current = current ? current + "\n\n" + piece : piece;
+        current = current ? current + sep + piece : piece;
       }
       // Una sola "oración" gigante: se corta a la fuerza.
       while (current.length > CHUNK_SIZE * 1.5) {
         chunks.push(current.slice(0, CHUNK_SIZE));
         current = current.slice(CHUNK_SIZE - CHUNK_OVERLAP);
       }
-    }
+    });
   }
   pushCurrent();
   return chunks;
@@ -54,7 +64,21 @@ export async function extractText(file: File): Promise<string> {
     const { extractText: extractPdf, getDocumentProxy } = await import("unpdf");
     const pdf = await getDocumentProxy(buffer);
     const { text } = await extractPdf(pdf, { mergePages: false });
-    return text.join("\n\n");
+    // Los enlaces de un PDF (ej. exportado de Canva) no están en el texto:
+    // se agregan al final de cada página para que el bot pueda darlos.
+    const pages = await Promise.all(
+      text.map(async (pageText, i) => {
+        try {
+          const page = await pdf.getPage(i + 1);
+          const annotations = (await page.getAnnotations()) as { subtype?: string; url?: string }[];
+          const urls = Array.from(new Set(annotations.filter((a) => a.subtype === "Link" && a.url).map((a) => a.url!)));
+          return urls.length ? `${pageText}\n\nEnlaces en esta página:\n${urls.map((u) => `- ${u}`).join("\n")}` : pageText;
+        } catch {
+          return pageText;
+        }
+      })
+    );
+    return pages.join("\n\n");
   }
 
   if (name.endsWith(".docx")) {

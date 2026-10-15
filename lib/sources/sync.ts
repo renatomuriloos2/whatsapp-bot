@@ -22,7 +22,7 @@ function titleFromName(name: string): string {
 }
 
 /**
- * Sincroniza una carpeta (Google Drive u OneDrive) con la base de conocimiento:
+ * Sincroniza una carpeta (Google Drive u OneDrive) o un sitio web con la base de conocimiento:
  * agrega archivos nuevos, vuelve a leer los modificados (cambia su cTag) y
  * borra los documentos cuyos archivos ya no están. Se detiene al acercarse
  * a `deadline` para no pasar el límite de tiempo de Vercel; lo que falte se

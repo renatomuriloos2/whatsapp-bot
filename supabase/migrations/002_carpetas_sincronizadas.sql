@@ -4,8 +4,8 @@
 
 create table if not exists kb_sources (
   id uuid primary key default gen_random_uuid(),
-  -- gdrive = Google Drive, onedrive = OneDrive / SharePoint
-  provider text not null default 'gdrive' check (provider in ('gdrive', 'onedrive')),
+  -- gdrive = Google Drive, onedrive = OneDrive / SharePoint, web = sitio web
+  provider text not null default 'gdrive' check (provider in ('gdrive', 'onedrive', 'web')),
   name text not null,
   share_url text not null,
   drive_id text not null,

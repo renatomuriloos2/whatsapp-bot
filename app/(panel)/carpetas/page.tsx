@@ -20,7 +20,7 @@ export const maxDuration = 60;
 
 interface SourceRow {
   id: string;
-  provider: "gdrive" | "onedrive";
+  provider: "gdrive" | "onedrive" | "web";
   name: string;
   web_url: string | null;
   access_level: AccessLevel;
@@ -52,11 +52,12 @@ export default async function CarpetasPage() {
 
   return (
     <div>
-      <h1 className="mb-1 text-xl font-semibold text-rethink-cream">Carpetas sincronizadas</h1>
+      <h1 className="mb-1 text-xl font-semibold text-rethink-cream">Carpetas y sitios sincronizados</h1>
       <p className="mb-6 text-sm text-rethink-cream/60">
-        Conecta carpetas de Google Drive y el bot usará sus archivos como base de conocimiento.
-        Cada día se revisan solas: lo nuevo se agrega, lo modificado se vuelve a leer y lo borrado
-        se quita. También puedes sincronizar a mano cuando quieras.
+        Conecta carpetas de Google Drive o sitios web (ej. el portal del SGI) y el bot usará su
+        contenido como base de conocimiento, incluidos los enlaces. Cada día se revisan solos: lo
+        nuevo se agrega, lo modificado se vuelve a leer y lo borrado se quita. También puedes
+        sincronizar a mano cuando quieras.
       </p>
 
       {serviceEmail ? (
@@ -95,11 +96,13 @@ export default async function CarpetasPage() {
                     )}
                   </p>
                   <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-rethink-cream/60">
-                    <span>{s.provider === "gdrive" ? "Google Drive" : "OneDrive"}</span>
+                    <span>{s.provider === "gdrive" ? "Google Drive" : s.provider === "web" ? "Sitio web" : "OneDrive"}</span>
                     <AccessLevelBadge level={s.access_level} />
                     {s.company_id && <span>Solo {companyName.get(s.company_id) ?? "una empresa"}</span>}
-                    <span>{s.category ? `Categoría: ${s.category}` : "Categoría: nombre de subcarpeta"}</span>
-                    <span>{s.file_count} documentos</span>
+                    {s.provider !== "web" && (
+                      <span>{s.category ? `Categoría: ${s.category}` : "Categoría: nombre de subcarpeta"}</span>
+                    )}
+                    <span>{s.file_count} {s.provider === "web" ? "páginas" : "documentos"}</span>
                     {!s.enabled && <span>· Pausada</span>}
                   </p>
                 </div>
@@ -154,11 +157,13 @@ export default async function CarpetasPage() {
         </div>
 
         <div className="card h-fit">
-          <h3 className="mb-1 text-sm font-medium text-rethink-cream">Conectar carpeta</h3>
+          <h3 className="mb-1 text-sm font-medium text-rethink-cream">Conectar carpeta o sitio web</h3>
           <p className="mb-4 text-xs text-rethink-cream/50">
             En Google Drive, abre la carpeta y copia la dirección del navegador (o clic derecho →
             Compartir → Copiar vínculo) y pégala aquí. Se leen Documentos, Hojas y Presentaciones de
-            Google, PDF, Word, TXT y CSV de hasta 15 MB, incluidas las subcarpetas.
+            Google, PDF, Word, TXT y CSV de hasta 15 MB, incluidas las subcarpetas. Para un sitio
+            web, pega su dirección: se leen hasta 60 páginas que empiecen con esa dirección, con sus
+            enlaces.
           </p>
           <AddSourceForm companies={companies} />
         </div>

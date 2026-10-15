@@ -47,7 +47,7 @@ export function AddSourceForm({ companies }: { companies: Pick<Company, "id" | "
     >
       <div>
         <label className="label" htmlFor="share_url">
-          Vínculo de la carpeta (Google Drive u OneDrive)
+          Vínculo de la carpeta de Google Drive o dirección del sitio web
         </label>
         <input
           id="share_url"
@@ -82,8 +82,8 @@ export function AddSourceForm({ companies }: { companies: Pick<Company, "id" | "
         />
       </div>
       {state.error && <p className="text-sm text-red-400">{state.error}</p>}
-      <PendingButton className="btn-primary" pendingText="Conectando y leyendo archivos…">
-        Conectar carpeta
+      <PendingButton className="btn-primary" pendingText="Conectando y leyendo…">
+        Conectar
       </PendingButton>
     </form>
   );
