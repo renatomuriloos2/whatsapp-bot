@@ -39,7 +39,12 @@ function getClient(): Anthropic {
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error("Falta ANTHROPIC_API_KEY en las variables de entorno.");
   }
-  anthropic ??= new Anthropic();
+  // Una clave creada a nivel de organización (sin workspace) exige indicar
+  // el workspace en cada llamada; con ANTHROPIC_WORKSPACE_ID se agrega solo.
+  const workspaceId = process.env.ANTHROPIC_WORKSPACE_ID?.trim();
+  anthropic ??= new Anthropic(
+    workspaceId ? { defaultHeaders: { "anthropic-workspace-id": workspaceId } } : {}
+  );
   return anthropic;
 }
 
