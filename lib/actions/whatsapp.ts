@@ -9,7 +9,7 @@ import { ActionState, isRedirectError } from "@/lib/action-state";
 import { ACCESS_LEVELS, BOT_MODELS, EFFORT_OPTIONS } from "@/lib/ai/models";
 import { extractText, indexDocument } from "@/lib/knowledge";
 import { generateReply, HistoryTurn } from "@/lib/ai/assistant";
-import { getBotSettings } from "@/lib/whatsapp/bot";
+import { getBotSettings, resumeAfterApproval } from "@/lib/whatsapp/bot";
 import { mimeFromName, STORAGE_BUCKET } from "@/lib/documents/files";
 import { notifyTeam } from "@/lib/notifications";
 import { sendText, whatsappConfigured } from "@/lib/whatsapp/cloud-api";
@@ -220,6 +220,7 @@ export async function updateContactAction(
     const supabase = createClient();
     const id = String(formData.get("id") ?? "");
     const fields = contactFields(formData);
+    const { data: before } = await supabase.from("wa_contacts").select("access_level").eq("id", id).single();
     const { error } = await supabase
       .from("wa_contacts")
       .update({
@@ -229,6 +230,16 @@ export async function updateContactAction(
       })
       .eq("id", id);
     if (error) return { error: error.message };
+
+    // Se aprobó el registro (de Público a Cliente o Confidencial): el bot le
+    // escribe y le entrega lo que había pedido.
+    if (before?.access_level === "publico" && fields.access_level !== "publico") {
+      try {
+        await resumeAfterApproval(createAdminClient(), id);
+      } catch (err) {
+        console.error("[contactos] no se pudo retomar la conversación:", err);
+      }
+    }
     revalidatePath("/conversaciones");
     revalidatePath(`/conversaciones/${id}`);
   } catch (err) {

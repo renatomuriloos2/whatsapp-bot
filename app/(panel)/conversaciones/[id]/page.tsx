@@ -12,6 +12,8 @@ import { formatUsd } from "@/lib/ai/models";
 import { WaContact, WaMessage } from "@/types/database";
 
 export const dynamic = "force-dynamic";
+// Al aprobar un registro el bot responde con IA (puede tardar unos segundos).
+export const maxDuration = 60;
 
 const SENDER_LABEL: Record<WaMessage["sender"], string> = {
   cliente: "",

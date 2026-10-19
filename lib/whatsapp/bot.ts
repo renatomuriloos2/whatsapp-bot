@@ -254,6 +254,20 @@ export async function handleIncomingMessage(
     return;
   }
 
+  await respond(supabase, settings, contact, { userText: msg.text, excludeMessageId: msg.waMessageId });
+}
+
+/**
+ * Genera la respuesta con IA y la envía (texto, archivos, avisos al equipo).
+ * Se usa para cada mensaje entrante y para retomar una conversación cuando el
+ * equipo aprueba el registro de un contacto.
+ */
+async function respond(
+  supabase: SupabaseClient,
+  settings: BotSettings,
+  contact: WaContact,
+  opts: { userText: string; excludeMessageId?: string; systemNote?: string; searchQuery?: string }
+) {
   // Historial reciente (sin el mensaje actual), del más antiguo al más nuevo.
   const { data: recent } = await supabase
     .from("wa_messages")
@@ -262,7 +276,7 @@ export async function handleIncomingMessage(
     .order("created_at", { ascending: false })
     .limit(settings.history_messages + 1);
   const history: HistoryTurn[] = (recent ?? [])
-    .filter((m) => m.wa_message_id !== msg.waMessageId)
+    .filter((m) => !opts.excludeMessageId || m.wa_message_id !== opts.excludeMessageId)
     .slice(0, settings.history_messages)
     .reverse()
     .map((m) => ({ role: m.direction === "in" ? "user" : "assistant", text: m.body }));
@@ -287,8 +301,10 @@ export async function handleIncomingMessage(
       companyName,
     },
     history,
-    userText: msg.text,
+    userText: opts.userText,
     adminClient: supabase,
+    systemNote: opts.systemNote,
+    searchQuery: opts.searchQuery,
   });
 
   await supabase.from("ai_usage").insert({
@@ -317,7 +333,7 @@ export async function handleIncomingMessage(
 
   if (reply.alerts.length > 0) {
     await supabase.from("kb_alerts").insert(
-      reply.alerts.map((al) => ({ detail: al.detail, documents: al.documents, contact_id: contact.id, question: msg.text }))
+      reply.alerts.map((al) => ({ detail: al.detail, documents: al.documents, contact_id: contact.id, question: opts.searchQuery ?? opts.userText }))
     );
   }
 
@@ -341,4 +357,33 @@ export async function handleIncomingMessage(
   if (reply.escalation) {
     await flagAttention(supabase, contact, reply.escalation, settings, { title: "El bot derivó a un asesor" });
   }
+}
+
+/**
+ * Cuando el equipo sube el nivel de un contacto que tenía una solicitud
+ * pendiente, el bot le escribe solo: avisa que ya quedó registrado y le
+ * entrega lo que había pedido. Solo dentro de la ventana de 24 h de WhatsApp.
+ */
+export async function resumeAfterApproval(supabase: SupabaseClient, contactId: string): Promise<boolean> {
+  const settings = await getBotSettings(supabase);
+  const { data } = await supabase.from("wa_contacts").select("*").eq("id", contactId).single();
+  const contact = data as WaContact | null;
+  if (!contact || !settings.enabled || contact.bot_paused || contact.status !== "activo") return false;
+  const lastIn = contact.last_inbound_at ? new Date(contact.last_inbound_at).getTime() : 0;
+  if (Date.now() - lastIn > 23.5 * 60 * 60 * 1000) return false;
+
+  const { data: lastClient } = await supabase
+    .from("wa_messages")
+    .select("body")
+    .eq("contact_id", contact.id)
+    .eq("direction", "in")
+    .order("created_at", { ascending: false })
+    .limit(5);
+  await respond(supabase, settings, contact, {
+    userText: "[Aviso del sistema: el equipo aprobó el registro de este contacto]",
+    searchQuery: (lastClient ?? []).map((m) => m.body).join(" ").slice(0, 500),
+    systemNote: `El equipo de ${settings.company_name} acaba de aprobar el registro de este contacto (ahora tiene nivel ${ACCESS_LEVEL_LABELS[contact.access_level]}). Escríbele un mensaje breve y cordial avisándole que ya quedó registrado y entrégale lo que había pedido en la conversación (si era un archivo, usa enviar_documento). No menciones este aviso del sistema.`,
+  });
+  await supabase.from("wa_contacts").update({ needs_attention: false, attention_reason: null }).eq("id", contact.id);
+  return true;
 }

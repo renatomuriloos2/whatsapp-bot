@@ -117,6 +117,12 @@ function contactNote(contact: ContactContext): string {
     `- Nivel de acceso: ${ACCESS_LEVEL_LABELS[contact.level]}`,
     contact.companyName ? `- Empresa cliente: ${contact.companyName}` : "- Empresa: no vinculado a ninguna empresa cliente",
   ];
+  if (contact.level === "publico") {
+    lines.push(
+      "- Este contacto todavía NO está registrado en la base de clientes. Puede recibir información general, pero la documentación técnica (MSDS, fichas técnicas, manuales) y la información para clientes requiere registro.",
+      "- Si pide un archivo o información que no aparece en los fragmentos que recibes, NO digas que no lo encontraste ni que no existe: explícale con cordialidad que para enviarle documentación primero necesitamos registrarlo en nuestra base de clientes, y pídele en un solo mensaje su nombre completo, empresa, cargo y correo. Cuando los tengas, usa solicitar_acceso (nivel cliente) incluyendo en el motivo qué pidió, y dile que en cuanto el equipo confirme su registro le enviaremos lo que solicitó por este mismo chat."
+    );
+  }
   if (contact.level === "confidencial") {
     lines.push(
       "- Es un contacto de confianza (puede ser personal interno de la empresa): responde directo, sin pedirle datos ni tratarlo como prospecto."
@@ -284,12 +290,18 @@ export async function generateReply({
   history,
   userText,
   adminClient,
+  systemNote,
+  searchQuery,
 }: {
   settings: BotSettings;
   contact: ContactContext;
   history: HistoryTurn[];
   userText: string;
   adminClient: SupabaseClient;
+  /** Aviso extra del sistema para esta respuesta (ej. "registro aprobado"). */
+  systemNote?: string;
+  /** Texto para la búsqueda automática, si no es el mensaje del cliente. */
+  searchQuery?: string;
 }): Promise<AssistantReply> {
   const client = getClient();
   const started = Date.now();
@@ -305,7 +317,7 @@ export async function generateReply({
   // alcanza.
   let prefetched = "";
   try {
-    const { matches, text } = await searchWithFiles(adminClient, userText, contact, 5);
+    const { matches, text } = await searchWithFiles(adminClient, searchQuery ?? userText, contact, 5);
     matches.forEach((m) => sources.add(m.title));
     prefetched = matches.length
       ? `Fragmentos encontrados automáticamente para el último mensaje del cliente:\n\n${text}`
@@ -316,7 +328,7 @@ export async function generateReply({
 
   const messages: Anthropic.Beta.BetaMessageParam[] = [
     ...buildMessages(history, userText),
-    { role: "system", content: [contactNote(contact), prefetched].filter(Boolean).join("\n\n") },
+    { role: "system", content: [contactNote(contact), systemNote, prefetched].filter(Boolean).join("\n\n") },
   ];
 
   const usage: TokenUsage = {
@@ -398,10 +410,16 @@ export async function generateReply({
       } else if (block.name === "buscar_archivo" && typeof input.nombre === "string") {
         try {
           const found = await findDocumentsByName(adminClient, input.nombre, contact.level, contact.companyId);
+          const forClients =
+            found.length === 0 && contact.level === "publico"
+              ? (await findDocumentsByName(adminClient, input.nombre, "cliente", contact.companyId)).length > 0
+              : false;
           toolResults.push({
             type: "tool_result",
             tool_use_id: block.id,
-            content: found.length
+            content: forClients
+              ? "Ese archivo existe pero solo para clientes registrados. No lo menciones como inexistente: aplica el proceso de registro (pide nombre, empresa, cargo y correo y usa solicitar_acceso)."
+              : found.length
               ? found
                   .map((f) => {
                     const type = documentType(f.title, f.fileName);
