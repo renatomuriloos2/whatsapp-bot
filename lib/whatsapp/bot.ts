@@ -4,6 +4,8 @@ import { BotSettings, WaContact } from "@/types/database";
 import { generateReply, HistoryTurn } from "@/lib/ai/assistant";
 import { markReadWithTyping, sendDocument, sendText } from "@/lib/whatsapp/cloud-api";
 import { downloadDocumentFile, SendableDocument } from "@/lib/documents/files";
+import { notifyTeam } from "@/lib/notifications";
+import { ACCESS_LEVEL_LABELS } from "@/lib/ai/models";
 
 export async function getBotSettings(supabase: SupabaseClient): Promise<BotSettings> {
   const { data, error } = await supabase.from("bot_settings").select("*").eq("id", 1).single();
@@ -90,7 +92,12 @@ async function sendAndLog(
 }
 
 /** Envía los archivos que pidió el cliente; si alguno falla, avisa y marca la conversación. */
-async function sendDocuments(supabase: SupabaseClient, contact: WaContact, documents: SendableDocument[]) {
+async function sendDocuments(
+  supabase: SupabaseClient,
+  contact: WaContact,
+  documents: SendableDocument[],
+  settings: BotSettings
+) {
   const failed: string[] = [];
   for (const doc of documents) {
     try {
@@ -119,15 +126,39 @@ async function sendDocuments(supabase: SupabaseClient, contact: WaContact, docum
       `No pude adjuntar ${failed.length === 1 ? "el archivo" : "los archivos"} ${failed.map((t) => `"${t}"`).join(", ")} 😕 Un asesor te lo enviará en breve.`,
       "sistema"
     );
-    await flagAttention(supabase, contact.id, `No se pudo enviar: ${failed.join(", ")}`);
+    await flagAttention(supabase, contact, `No se pudo enviar: ${failed.join(", ")}`, settings);
   }
 }
 
-async function flagAttention(supabase: SupabaseClient, contactId: string, reason: string) {
-  await supabase
+/**
+ * Marca la conversación como "necesita atención" y avisa al equipo por
+ * WhatsApp/correo. Para no llenar de avisos, solo se avisa cuando la
+ * conversación pasa de "sin pendientes" a "con pendientes" (o si `always`).
+ */
+async function flagAttention(
+  supabase: SupabaseClient,
+  contact: WaContact,
+  reason: string,
+  settings: BotSettings,
+  { always = false, title = "Pendiente en el bot de WhatsApp" } = {}
+) {
+  const { data: changed } = await supabase
     .from("wa_contacts")
     .update({ needs_attention: true, attention_reason: reason })
-    .eq("id", contactId);
+    .eq("id", contact.id)
+    .eq("needs_attention", false)
+    .select("id");
+  if (!changed?.length) {
+    await supabase.from("wa_contacts").update({ attention_reason: reason }).eq("id", contact.id);
+    if (!always) return;
+  }
+  await notifyTeam(settings, {
+    title,
+    reason,
+    contactName: contact.display_name ?? contact.profile_name,
+    contactPhone: contact.phone,
+    contactId: contact.id,
+  });
 }
 
 /**
@@ -181,7 +212,16 @@ export async function handleIncomingMessage(
       .select("id", { count: "exact", head: true })
       .eq("contact_id", contact.id)
       .eq("direction", "out");
-    if (!count) await sendAndLog(supabase, contact, settings.pending_message, "sistema");
+    if (!count) {
+      await sendAndLog(supabase, contact, settings.pending_message, "sistema");
+      await notifyTeam(settings, {
+        title: "Número nuevo pendiente de aprobación",
+        reason: `Escribió: "${body.slice(0, 200)}". Apruébalo en Conversaciones.`,
+        contactName: contact.profile_name,
+        contactPhone: contact.phone,
+        contactId: contact.id,
+      });
+    }
     return;
   }
 
@@ -197,7 +237,7 @@ export async function handleIncomingMessage(
 
   if ((await monthToDateCost(supabase)) >= settings.monthly_budget_usd) {
     await sendAndLog(supabase, contact, settings.budget_exceeded_message, "sistema");
-    await flagAttention(supabase, contact.id, "Presupuesto mensual de IA agotado.");
+    await flagAttention(supabase, contact, "Presupuesto mensual de IA agotado.", settings);
     return;
   }
 
@@ -210,7 +250,7 @@ export async function handleIncomingMessage(
     .eq("sender", "bot")
     .gte("created_at", dayStart.toISOString());
   if ((repliesToday ?? 0) >= settings.daily_limit_per_contact) {
-    await flagAttention(supabase, contact.id, "Alcanzó el límite diario de respuestas del bot.");
+    await flagAttention(supabase, contact, "Alcanzó el límite diario de respuestas del bot.", settings);
     return;
   }
 
@@ -272,7 +312,7 @@ export async function handleIncomingMessage(
     await sendAndLog(supabase, contact, settings.handoff_message, "sistema");
   }
   if (reply.documents.length > 0) {
-    await sendDocuments(supabase, contact, reply.documents);
+    await sendDocuments(supabase, contact, reply.documents, settings);
   }
 
   if (reply.alerts.length > 0) {
@@ -281,7 +321,24 @@ export async function handleIncomingMessage(
     );
   }
 
+  if (reply.accessRequest) {
+    const r = reply.accessRequest;
+    const level = ACCESS_LEVEL_LABELS[r.level];
+    const details = [r.name, r.company].filter(Boolean).join(" — ");
+    await supabase
+      .from("wa_contacts")
+      .update({ notes: `${contact.notes ? `${contact.notes}\n` : ""}Solicitó acceso ${level}: ${details}. ${r.reason}`.trim() })
+      .eq("id", contact.id);
+    await flagAttention(
+      supabase,
+      contact,
+      `Solicita acceso ${level}${details ? ` (${details})` : ""}: ${r.reason}. Apruébalo cambiando su nivel en Conversaciones.`,
+      settings,
+      { always: true, title: `Solicitud de acceso ${level}` }
+    );
+  }
+
   if (reply.escalation) {
-    await flagAttention(supabase, contact.id, reply.escalation);
+    await flagAttention(supabase, contact, reply.escalation, settings, { title: "El bot derivó a un asesor" });
   }
 }

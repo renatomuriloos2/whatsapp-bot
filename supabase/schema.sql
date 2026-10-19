@@ -384,3 +384,6 @@ alter table kb_alerts enable row level security;
 drop policy if exists "kb_alerts staff all" on kb_alerts;
 create policy "kb_alerts staff all" on kb_alerts
   for all using (is_staff()) with check (is_staff());
+alter table bot_settings add column if not exists alert_phone text;
+alter table bot_settings add column if not exists alert_email text;
+alter table bot_settings add column if not exists alert_template text;

@@ -11,6 +11,7 @@ import { extractText, indexDocument } from "@/lib/knowledge";
 import { generateReply, HistoryTurn } from "@/lib/ai/assistant";
 import { getBotSettings } from "@/lib/whatsapp/bot";
 import { mimeFromName, STORAGE_BUCKET } from "@/lib/documents/files";
+import { notifyTeam } from "@/lib/notifications";
 import { sendText, whatsappConfigured } from "@/lib/whatsapp/cloud-api";
 import { AccessLevel, ContactStatus } from "@/types/database";
 
@@ -357,6 +358,9 @@ export async function updateSettingsAction(
       monthly_budget_usd: budget,
       daily_limit_per_contact: dailyLimit,
       history_messages: historyMessages,
+      alert_phone: text("alert_phone").replace(/\D/g, "") || null,
+      alert_email: text("alert_email") || null,
+      alert_template: text("alert_template") || null,
       updated_at: new Date().toISOString(),
     };
     if (!fields.instructions || !fields.pending_message || !fields.handoff_message || !fields.budget_exceeded_message) {
@@ -364,7 +368,13 @@ export async function updateSettingsAction(
     }
 
     const { error } = await supabase.from("bot_settings").update(fields).eq("id", 1);
-    if (error) return { error: error.message };
+    if (error) {
+      return {
+        error: error.message.includes("alert_")
+          ? "Falta correr supabase/migrations/006_notificaciones.sql en Supabase (SQL Editor)."
+          : error.message,
+      };
+    }
     revalidatePath("/panel", "layout");
   } catch (err) {
     if (isRedirectError(err)) throw err;
@@ -450,6 +460,9 @@ export async function testBotAction(prev: TestBotState, formData: FormData): Pro
             [
               reply.text,
               ...reply.documents.map((d) => `📎 (se enviaría el archivo: ${d.title})`),
+              ...(reply.accessRequest
+                ? [`🔑 (se avisaría al equipo: solicita acceso ${reply.accessRequest.level})`]
+                : []),
               ...reply.alerts.map((al) => `⚠️ (aviso interno para el equipo, el cliente no lo ve: ${al.detail})`),
             ]
               .filter(Boolean)
@@ -512,4 +525,17 @@ export async function resolveAlertAction(formData: FormData) {
   const supabase = createClient();
   await supabase.from("kb_alerts").update({ resolved: true }).eq("id", String(formData.get("id")));
   revalidatePath("/conocimiento");
+}
+
+/** Envía un aviso de prueba al WhatsApp/correo guardados en Configuración. */
+export async function testNotificationAction(): Promise<string> {
+  await requireAppUser("admin");
+  const settings = await getBotSettings(createAdminClient());
+  const results = await notifyTeam(settings, {
+    title: "Aviso de prueba",
+    reason: "Si te llegó este mensaje, los avisos del bot están funcionando ✅",
+    contactName: null,
+    contactPhone: null,
+  });
+  return results.join(" · ");
 }

@@ -100,5 +100,10 @@ export interface BotSettings {
   budget_exceeded_message: string;
   daily_limit_per_contact: number;
   history_messages: number;
+  /** WhatsApp (con código de país) y correo que reciben los avisos de pendientes. */
+  alert_phone?: string | null;
+  alert_email?: string | null;
+  /** Plantilla aprobada en Meta para avisar por WhatsApp fuera de la ventana de 24 h. */
+  alert_template?: string | null;
   updated_at: string;
 }

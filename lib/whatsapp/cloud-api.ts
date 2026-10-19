@@ -117,6 +117,30 @@ export async function sendDocument(
 }
 
 /**
+ * Envía una plantilla aprobada con un solo parámetro en el cuerpo ({{1}}).
+ * Es la única forma de escribirle a alguien que no le escribió al número en
+ * las últimas 24 horas.
+ */
+export async function sendTemplate(to: string, name: string, param: string, language = "es"): Promise<void> {
+  await graphPost({
+    messaging_product: "whatsapp",
+    to,
+    type: "template",
+    template: {
+      name,
+      language: { code: language },
+      components: [
+        {
+          type: "body",
+          // Los parámetros de plantilla no admiten saltos de línea ni tabulaciones.
+          parameters: [{ type: "text", text: param.replace(/[\n\t]+/g, " · ").replace(/ {4,}/g, " ").slice(0, 1000) }],
+        },
+      ],
+    },
+  });
+}
+
+/**
  * Marca el mensaje como leído (doble check azul) y muestra "escribiendo…"
  * mientras el bot prepara la respuesta. Es cosmético: si falla, se ignora.
  */

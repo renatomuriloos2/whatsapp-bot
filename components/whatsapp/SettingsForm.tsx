@@ -1,8 +1,8 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { useFormState, useFormStatus } from "react-dom";
-import { updateSettingsAction } from "@/lib/actions/whatsapp";
+import { testNotificationAction, updateSettingsAction } from "@/lib/actions/whatsapp";
 import { ActionState } from "@/lib/action-state";
 import { BotSettings } from "@/types/database";
 import { BOT_MODELS, EFFORT_OPTIONS } from "@/lib/ai/models";
@@ -26,6 +26,33 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
         {hint && <p className="mt-0.5 text-xs text-rethink-cream/50">{hint}</p>}
       </div>
       {children}
+    </div>
+  );
+}
+
+function TestNotificationButton() {
+  const [result, setResult] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <button
+        type="button"
+        disabled={sending}
+        className="btn-secondary"
+        onClick={async () => {
+          setSending(true);
+          setResult(null);
+          try {
+            setResult(await testNotificationAction());
+          } catch {
+            setResult("No se pudo enviar.");
+          }
+          setSending(false);
+        }}
+      >
+        {sending ? "Enviando…" : "Enviar aviso de prueba"}
+      </button>
+      {result && <p className="text-xs text-rethink-cream/70">{result}</p>}
     </div>
   );
 }
@@ -178,6 +205,56 @@ export function SettingsForm({ settings }: { settings: BotSettings }) {
           </label>
           <textarea id="handoff_message" name="handoff_message" rows={2} defaultValue={settings.handoff_message} className="input" />
         </div>
+      </Section>
+
+      <Section
+        title="Avisos al equipo"
+        hint="Te avisamos cuando alguien pide acceso de Cliente o Confidencial, cuando el bot deriva a un asesor o cuando escribe un número nuevo pendiente de aprobación."
+      >
+        <div>
+          <label className="label" htmlFor="alert_phone">
+            WhatsApp que recibe los avisos (con código de país)
+          </label>
+          <input
+            id="alert_phone"
+            name="alert_phone"
+            inputMode="tel"
+            placeholder="50499998888"
+            defaultValue={settings.alert_phone ?? ""}
+            className="input"
+          />
+        </div>
+        <div>
+          <label className="label" htmlFor="alert_template">
+            Nombre de la plantilla de WhatsApp aprobada (recomendado)
+          </label>
+          <input
+            id="alert_template"
+            name="alert_template"
+            placeholder="aviso_pendiente"
+            defaultValue={settings.alert_template ?? ""}
+            className="input"
+          />
+          <p className="mt-1 text-xs text-rethink-cream/50">
+            Sin plantilla, WhatsApp solo entrega el aviso si ese número le escribió al bot en las últimas 24 horas.
+          </p>
+        </div>
+        <div>
+          <label className="label" htmlFor="alert_email">
+            Correo que recibe los avisos (puedes poner varios separados por coma)
+          </label>
+          <input
+            id="alert_email"
+            name="alert_email"
+            type="text"
+            placeholder="renato@rethink.hn"
+            defaultValue={settings.alert_email ?? ""}
+            className="input"
+          />
+          <p className="mt-1 text-xs text-rethink-cream/50">Requiere RESEND_API_KEY en Vercel.</p>
+        </div>
+        <TestNotificationButton />
+        <p className="text-xs text-rethink-cream/50">Guarda la configuración antes de enviar el aviso de prueba.</p>
       </Section>
 
       <div className="flex items-center gap-4 lg:col-span-2">

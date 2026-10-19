@@ -44,6 +44,15 @@ export interface AssistantReply {
   documents: SendableDocument[];
   /** Contradicciones entre documentos detectadas por el bot (solo para el equipo). */
   alerts: KbAlert[];
+  /** El contacto pidió un nivel de acceso mayor (lo aprueba una persona). */
+  accessRequest: AccessRequest | null;
+}
+
+export interface AccessRequest {
+  level: "cliente" | "confidencial";
+  name: string;
+  company: string;
+  reason: string;
 }
 
 export interface KbAlert {
@@ -90,6 +99,7 @@ ${settings.instructions.trim()}
 - Si la consulta implica un riesgo de seguridad (derrames o exposición a químicos, intoxicaciones, quemaduras, incendios), da solo las indicaciones de seguridad generales que estén en la base de conocimiento y deriva de inmediato a un asesor.
 - Cuando la información incluye un enlace (formularios, documentos, procedimientos), escribe el enlace completo tal como aparece, para que la persona pueda abrirlo. Nunca inventes ni modifiques un enlace.
 - Si la persona pide un archivo (ficha técnica, hoja de seguridad/MSDS, manual, certificado, formulario) y el documento aparece en los fragmentos con "[archivo enviable: id …]", usa enviar_documento con ese id: el archivo le llegará por WhatsApp justo después de tu mensaje, para que lo descargue. En tu respuesta di brevemente qué le envías (sin pegar enlaces de descarga). Envía solo lo que pidió, máximo ${MAX_DOCUMENTS} archivos. Si el archivo pedido no aparece marcado así en los fragmentos, usa buscar_archivo con el nombre del producto o documento antes de concluir que no lo tienes; solo si tampoco aparece ahí, dilo y ofrece un asesor.
+- Si alguien pide acceso a información para clientes o a información interna/confidencial (ej. dice ser cliente de la empresa, distribuidor o empleado de ${settings.company_name}), pídele de forma breve su nombre, empresa y cargo (si no los dio ya), usa solicitar_acceso y dile que el equipo revisará su solicitud y le avisará. Mientras tanto no le des información de ese nivel ni prometas que será aprobada. Si el contexto indica que ya tiene ese nivel, no la uses.
 - Pide datos personales (nombre, empresa, ciudad) solo si la persona quiere cotizar, comprar o que un asesor la contacte; nunca como condición para responder.
 - Usa derivar_a_asesor cuando el cliente pida hablar con una persona, quiera cotizar o comprar, tenga un reclamo o una emergencia, o cuando no puedas resolver su consulta.
 
@@ -190,6 +200,23 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
     strict: true,
   },
   {
+    name: "solicitar_acceso",
+    description:
+      "Registra que el contacto pide un nivel de acceso mayor (cliente o confidencial) y avisa al equipo por WhatsApp/correo para que lo apruebe en el portal. El contacto NO recibe el acceso hasta que una persona lo apruebe.",
+    input_schema: {
+      type: "object",
+      properties: {
+        nivel: { type: "string", enum: ["cliente", "confidencial"], description: "Nivel que solicita." },
+        nombre: { type: "string", description: "Nombre de la persona (vacío si no lo dio)." },
+        empresa: { type: "string", description: "Empresa y cargo, si los dio (vacío si no)." },
+        motivo: { type: "string", description: "Por qué lo pide, en una frase." },
+      },
+      required: ["nivel", "nombre", "empresa", "motivo"],
+      additionalProperties: false,
+    },
+    strict: true,
+  },
+  {
     name: "derivar_a_asesor",
     description:
       "Avisa al equipo humano para que tome la conversación. Úsala cuando el cliente pida una persona, quiera cotizar/comprar, tenga un reclamo o emergencia, o no puedas resolver su consulta. Después de usarla, dile al cliente que un asesor le escribirá.",
@@ -270,6 +297,7 @@ export async function generateReply({
   const sources = new Set<string>();
   const documents: SendableDocument[] = [];
   const alerts: KbAlert[] = [];
+  let accessRequest: AccessRequest | null = null;
 
   // Búsqueda previa con el mensaje del cliente: en la mayoría de las
   // preguntas evita una vuelta extra al modelo solo para decidir qué buscar
@@ -423,6 +451,18 @@ export async function generateReply({
           tool_use_id: block.id,
           content: "Aviso interno registrado. No lo menciones al cliente; respóndele con la fuente de mayor prioridad.",
         });
+      } else if (block.name === "solicitar_acceso" && (input.nivel === "cliente" || input.nivel === "confidencial")) {
+        accessRequest = {
+          level: input.nivel,
+          name: String(input.nombre ?? "").trim(),
+          company: String(input.empresa ?? "").trim(),
+          reason: String(input.motivo ?? "").trim(),
+        };
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: block.id,
+          content: "Solicitud registrada y equipo avisado. Dile que la revisarán y le avisarán; no le des aún información de ese nivel.",
+        });
       } else if (block.name === "derivar_a_asesor" && typeof input.motivo === "string") {
         escalation = input.motivo;
         toolResults.push({
@@ -465,5 +505,6 @@ export async function generateReply({
     sources: Array.from(sources),
     documents: refused ? [] : documents,
     alerts,
+    accessRequest,
   };
 }
