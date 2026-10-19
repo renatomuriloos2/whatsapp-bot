@@ -7,7 +7,7 @@ import { Company } from "@/types/database";
 import { CompanySelect, LevelSelect } from "@/components/whatsapp/LevelSelect";
 import { cn } from "@/lib/utils";
 
-const SUPPORTED = /\.(pdf|docx|html?|txt|md|markdown|csv|json)$/i;
+const SUPPORTED = /\.(pdf|docx?|html?|txt|md|markdown|csv|json|png|jpe?g|webp|gif)$/i;
 // Vercel limita cada petición a 4.5 MB; cada archivo viaja en su propia petición.
 const MAX_BYTES = 4 * 1024 * 1024;
 
@@ -140,7 +140,7 @@ export function BulkUploadForm({
             id="bulk-files"
             type="file"
             multiple
-            accept=".pdf,.docx,.html,.htm,.txt,.md,.markdown,.csv,.json"
+            accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.gif,.html,.htm,.txt,.md,.markdown,.csv,.json"
             disabled={running}
             onChange={(e) => pick(e.target.files)}
             className="input file:mr-3 file:rounded-md file:border-0 file:bg-rethink-orange/20 file:px-3 file:py-1 file:text-rethink-orange"

@@ -1,4 +1,5 @@
 import "server-only";
+import { imageToText, isImageName } from "@/lib/ai/vision";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AccessLevel } from "@/types/database";
 import { allowedLevels } from "@/lib/ai/models";
@@ -55,7 +56,7 @@ export function chunkText(text: string): string[] {
   return chunks;
 }
 
-/** Extrae texto de un archivo subido (PDF, Word, texto, Markdown, CSV). */
+/** Extrae texto de un archivo subido (PDF, Word, imagen, texto, Markdown, CSV). */
 export async function extractText(file: File): Promise<string> {
   const name = file.name.toLowerCase();
   const buffer = new Uint8Array(await file.arrayBuffer());
@@ -87,6 +88,17 @@ export async function extractText(file: File): Promise<string> {
     return value;
   }
 
+  if (name.endsWith(".doc")) {
+    // Word 97-2003 (formato binario antiguo).
+    const WordExtractor = (await import("word-extractor")).default;
+    const doc = await new WordExtractor().extract(Buffer.from(buffer));
+    return [doc.getBody(), doc.getFootnotes(), doc.getEndnotes()].filter((t) => t?.trim()).join("\n\n");
+  }
+
+  if (isImageName(name)) {
+    return imageToText(buffer, file.name);
+  }
+
   if (/\.html?$/.test(name)) {
     const { savedHtmlToText } = await import("@/lib/sources/web");
     return savedHtmlToText(new TextDecoder("utf-8").decode(buffer));
@@ -96,7 +108,7 @@ export async function extractText(file: File): Promise<string> {
     return new TextDecoder("utf-8").decode(buffer);
   }
 
-  throw new Error("Formato no soportado. Sube PDF, Word (.docx), página web (.html), TXT, Markdown o CSV.");
+  throw new Error("Formato no soportado. Sube PDF, Word (.doc/.docx), imagen (PNG/JPG), página web (.html), TXT, Markdown o CSV.");
 }
 
 // ---- Embeddings (opcionales, Voyage AI) ----------------------------------

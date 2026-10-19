@@ -106,12 +106,15 @@ export async function sendDocument(
   caption?: string
 ): Promise<string | null> {
   const mediaId = await uploadMedia(file.data, file.fileName, file.mimeType);
+  // PNG/JPG van como imagen (se ven en el chat); el resto como documento.
+  const asImage = file.mimeType === "image/png" || file.mimeType === "image/jpeg";
   const res = await graphPost({
     messaging_product: "whatsapp",
     recipient_type: "individual",
     to,
-    type: "document",
-    document: { id: mediaId, filename: file.fileName, ...(caption ? { caption } : {}) },
+    ...(asImage
+      ? { type: "image", image: { id: mediaId, caption: caption ?? file.fileName } }
+      : { type: "document", document: { id: mediaId, filename: file.fileName, ...(caption ? { caption } : {}) } }),
   });
   return res.messages?.[0]?.id ?? null;
 }

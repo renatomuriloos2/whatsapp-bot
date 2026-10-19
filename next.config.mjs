@@ -6,7 +6,7 @@ const nextConfig = {
   experimental: {
     // Extracción de texto de PDF/Word: se cargan desde node_modules en vez de
     // empaquetarlas (unpdf usa import.meta, que webpack no soporta bien).
-    serverComponentsExternalPackages: ["unpdf", "mammoth", "@sparticuz/chromium", "puppeteer-core"],
+    serverComponentsExternalPackages: ["unpdf", "mammoth", "word-extractor", "@sparticuz/chromium", "puppeteer-core"],
     // El Chromium comprimido de @sparticuz/chromium se lee en tiempo de
     // ejecución; hay que incluirlo en las funciones que leen sitios web.
     outputFileTracingIncludes: {

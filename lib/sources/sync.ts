@@ -4,7 +4,7 @@ import { extractText, indexDocument } from "@/lib/knowledge";
 import { downloadRemoteFile, listFiles } from "@/lib/sources";
 import type { KbSource } from "@/lib/sources/types";
 
-const SUPPORTED = /\.(pdf|docx|html?|txt|md|markdown|csv|json)$/i;
+const SUPPORTED = /\.(pdf|docx?|html?|txt|md|markdown|csv|json|png|jpe?g|webp|gif)$/i;
 const MAX_BYTES = 15 * 1024 * 1024;
 // Archivos que se descargan e indexan al mismo tiempo.
 const CONCURRENCY = 5;

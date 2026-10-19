@@ -23,6 +23,10 @@ const MIME_BY_EXT: Record<string, string> = {
   txt: "text/plain",
   csv: "text/plain",
   md: "text/plain",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
 };
 
 export function mimeFromName(name: string): string {
