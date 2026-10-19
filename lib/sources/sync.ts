@@ -4,7 +4,7 @@ import { extractText, indexDocument } from "@/lib/knowledge";
 import { downloadRemoteFile, listFiles } from "@/lib/sources";
 import type { KbSource } from "@/lib/sources/types";
 
-const SUPPORTED = /\.(pdf|docx?|html?|txt|md|markdown|csv|json|png|jpe?g|webp|gif)$/i;
+const SUPPORTED = /\.(pdf|docx?|xlsx|xlsm|pptx|html?|txt|md|markdown|csv|json|png|jpe?g|webp|gif)$/i;
 const MAX_BYTES = 15 * 1024 * 1024;
 // Archivos que se descargan e indexan al mismo tiempo.
 const CONCURRENCY = 5;
@@ -89,7 +89,9 @@ export async function syncSource(
         }
         const fields = {
           title: titleFromName(item.name),
-          category: source.category ?? (folderPath.length ? folderPath[folderPath.length - 1] : null),
+          category:
+            source.category ??
+            (folderPath.length ? folderPath.join(" / ") : source.provider === "web" ? source.name : null),
           access_level: source.access_level,
           company_id: source.company_id,
           file_name: item.name,
@@ -128,6 +130,12 @@ export async function syncSource(
         }
       })
     );
+
+    // Páginas web guardadas antes sin categoría: toman el nombre del sitio
+    // (ej. "Portal SGI"), así el bot reconoce que son del SGI.
+    if (source.provider === "web" && !source.category) {
+      await supabase.from("kb_documents").update({ category: source.name }).eq("source_id", source.id).is("category", null);
+    }
 
     const { count } = await supabase
       .from("kb_documents")

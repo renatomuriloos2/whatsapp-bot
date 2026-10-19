@@ -7,7 +7,7 @@ import { Company } from "@/types/database";
 import { CompanySelect, LevelSelect } from "@/components/whatsapp/LevelSelect";
 import { cn } from "@/lib/utils";
 
-const SUPPORTED = /\.(pdf|docx?|html?|txt|md|markdown|csv|json|png|jpe?g|webp|gif)$/i;
+const SUPPORTED = /\.(pdf|docx?|xlsx|xlsm|pptx|html?|txt|md|markdown|csv|json|png|jpe?g|webp|gif)$/i;
 // Vercel limita cada petición a 4.5 MB; cada archivo viaja en su propia petición.
 const MAX_BYTES = 4 * 1024 * 1024;
 
@@ -28,10 +28,17 @@ function titleFromName(name: string): string {
     .trim();
 }
 
-/** Carpeta inmediata del archivo dentro de la carpeta elegida (sirve de categoría). */
+/**
+ * Ruta de carpetas del archivo (sirve de categoría), ej.
+ * "Documentación SGI / Procedimientos". Se quita la carpeta que agrega
+ * OneDrive al descargar ("OneDrive_2026-10-19").
+ */
 function folderOf(path: string): string | null {
-  const parts = path.split("/");
-  return parts.length > 2 ? parts[parts.length - 2] : null;
+  const parts = path
+    .split("/")
+    .slice(0, -1)
+    .filter((p) => !/^OneDrive_\d{4}-\d{2}-\d{2}/i.test(p));
+  return parts.length ? parts.join(" / ") : null;
 }
 
 const STATUS_STYLE: Record<ItemStatus, string> = {
@@ -140,7 +147,7 @@ export function BulkUploadForm({
             id="bulk-files"
             type="file"
             multiple
-            accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.gif,.html,.htm,.txt,.md,.markdown,.csv,.json"
+            accept=".pdf,.doc,.docx,.xlsx,.xlsm,.pptx,.png,.jpg,.jpeg,.webp,.gif,.html,.htm,.txt,.md,.markdown,.csv,.json"
             disabled={running}
             onChange={(e) => pick(e.target.files)}
             className="input file:mr-3 file:rounded-md file:border-0 file:bg-rethink-orange/20 file:px-3 file:py-1 file:text-rethink-orange"
@@ -179,7 +186,7 @@ export function BulkUploadForm({
       </div>
       <label className="flex items-center gap-2 text-sm text-rethink-cream/80">
         <input type="checkbox" name="folder_category" defaultChecked className="accent-rethink-orange" />
-        Si subo una carpeta, usar el nombre de cada subcarpeta como categoría
+        Si subo una carpeta, usar la ruta de carpetas como categoría (ej. &quot;Documentación SGI / Procedimientos&quot;)
       </label>
 
       {items.length > 0 && (

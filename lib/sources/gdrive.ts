@@ -12,7 +12,11 @@ const FOLDER = "application/vnd.google-apps.folder";
 // Documentos nativos de Google: se exportan a texto para poder leerlos.
 const EXPORTS: Record<string, { mime: string; ext: string }> = {
   "application/vnd.google-apps.document": { mime: "text/plain", ext: ".txt" },
-  "application/vnd.google-apps.spreadsheet": { mime: "text/csv", ext: ".csv" },
+  // Excel (no CSV) para leer todas las hojas, no solo la primera.
+  "application/vnd.google-apps.spreadsheet": {
+    mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ext: ".xlsx",
+  },
   "application/vnd.google-apps.presentation": { mime: "text/plain", ext: ".txt" },
 };
 

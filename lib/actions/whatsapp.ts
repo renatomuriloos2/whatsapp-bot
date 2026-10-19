@@ -563,3 +563,14 @@ export async function testNotificationAction(form?: {
   });
   return results.join(" · ");
 }
+
+/** Cambia el nombre de una categoría en todos sus documentos (ej. marcarlos como SGI). */
+export async function renameCategoryAction(formData: FormData) {
+  await requireAppUser();
+  const from = String(formData.get("from") ?? "");
+  const to = String(formData.get("to") ?? "").trim();
+  if (!from || !to || from === to) return;
+  const supabase = createClient();
+  await supabase.from("kb_documents").update({ category: to }).eq("category", from);
+  revalidatePath("/conocimiento");
+}

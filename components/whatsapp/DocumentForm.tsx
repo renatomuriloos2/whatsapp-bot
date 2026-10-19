@@ -88,7 +88,7 @@ export function DocumentForm({
             id="file"
             name="file"
             type="file"
-            accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.gif,.html,.htm,.txt,.md,.markdown,.csv,.json"
+            accept=".pdf,.doc,.docx,.xlsx,.xlsm,.pptx,.png,.jpg,.jpeg,.webp,.gif,.html,.htm,.txt,.md,.markdown,.csv,.json"
             className="input file:mr-3 file:rounded-md file:border-0 file:bg-rethink-orange/20 file:px-3 file:py-1 file:text-rethink-orange"
           />
         </div>

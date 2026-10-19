@@ -4,7 +4,7 @@ import { getAllCompanies } from "@/lib/data";
 import { DocumentForm } from "@/components/whatsapp/DocumentForm";
 import { BulkUploadForm } from "@/components/whatsapp/BulkUploadForm";
 import { AccessLevelBadge } from "@/components/whatsapp/Badges";
-import { resolveAlertAction, toggleDocumentAction } from "@/lib/actions/whatsapp";
+import { renameCategoryAction, resolveAlertAction, toggleDocumentAction } from "@/lib/actions/whatsapp";
 import { formatDate } from "@/lib/utils";
 import { KbDocument } from "@/types/database";
 
@@ -27,7 +27,7 @@ export default async function ConocimientoPage({
   const [{ data }, companies, { data: fileRows }, { data: alertRows }] = await Promise.all([
     query,
     getAllCompanies(supabase),
-    supabase.from("kb_documents").select("file_name").not("file_name", "is", null),
+    supabase.from("kb_documents").select("file_name, category"),
     // Si la tabla aún no existe (falta la migración 005) simplemente no hay avisos.
     supabase
       .from("kb_alerts")
@@ -43,7 +43,12 @@ export default async function ConocimientoPage({
     question: string | null;
     created_at: string;
   }[];
-  const existingFileNames = (fileRows ?? []).map((r) => r.file_name as string);
+  const existingFileNames = (fileRows ?? []).filter((r) => r.file_name).map((r) => r.file_name as string);
+  const categoryCounts = new Map<string, number>();
+  for (const r of fileRows ?? []) {
+    if (r.category) categoryCounts.set(r.category, (categoryCounts.get(r.category) ?? 0) + 1);
+  }
+  const categories = Array.from(categoryCounts.entries()).sort((a, b) => a[0].localeCompare(b[0]));
   const docs = (data ?? []) as (Omit<KbDocument, "content" | "description" | "created_by" | "created_at"> & {
     source_id: string | null;
   })[];
@@ -97,10 +102,39 @@ export default async function ConocimientoPage({
         <p className="mb-4 mt-2 text-xs text-rethink-cream/50">
           Cada archivo se convierte en un documento cuyo título es el nombre del archivo. Se omiten
           los que ya están subidos (mismo nombre de archivo), los de más de 4 MB y los formatos no
-          soportados (Excel o PowerPoint: guárdalos antes como PDF o CSV).
+          soportados. Se leen PDF, Word, Excel (.xlsx), PowerPoint (.pptx), imágenes, TXT y CSV.
         </p>
         <BulkUploadForm companies={companies} existingFileNames={existingFileNames} />
       </details>
+
+      {categories.length > 0 && (
+        <details className="card mb-6">
+          <summary className="cursor-pointer text-sm font-medium text-rethink-cream">
+            Categorías ({categories.length}) — renombrar o marcar como SGI
+          </summary>
+          <p className="mb-4 mt-2 text-xs text-rethink-cream/50">
+            Si el nombre de la categoría contiene &quot;SGI&quot; (ej. &quot;SGI - Procedimientos&quot;), el bot usa esos
+            documentos solo para preguntas del Sistema de Gestión (auditorías, procedimientos, consultas internas)
+            y nunca para responder a clientes sobre productos.
+          </p>
+          <ul className="flex flex-col gap-2">
+            {categories.map(([name, count]) => (
+              <li key={name}>
+                <form action={renameCategoryAction} className="flex flex-wrap items-center gap-2">
+                  <input type="hidden" name="from" value={name} />
+                  <span className="min-w-[12rem] flex-1 text-sm text-rethink-cream/80">
+                    {name} <span className="text-xs text-rethink-cream/50">({count})</span>
+                  </span>
+                  <input name="to" defaultValue={name} className="input max-w-xs flex-1" aria-label={`Nuevo nombre para ${name}`} />
+                  <button type="submit" className="btn-secondary text-xs">
+                    Renombrar
+                  </button>
+                </form>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_360px]">
         <div className="card overflow-x-auto">

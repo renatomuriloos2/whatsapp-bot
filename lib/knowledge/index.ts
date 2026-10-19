@@ -95,6 +95,16 @@ export async function extractText(file: File): Promise<string> {
     return [doc.getBody(), doc.getFootnotes(), doc.getEndnotes()].filter((t) => t?.trim()).join("\n\n");
   }
 
+  if (name.endsWith(".xlsx") || name.endsWith(".xlsm")) {
+    const { xlsxToText } = await import("@/lib/knowledge/office");
+    return xlsxToText(buffer);
+  }
+
+  if (name.endsWith(".pptx")) {
+    const { pptxToText } = await import("@/lib/knowledge/office");
+    return pptxToText(buffer);
+  }
+
   if (isImageName(name)) {
     return imageToText(buffer, file.name);
   }
@@ -108,7 +118,7 @@ export async function extractText(file: File): Promise<string> {
     return new TextDecoder("utf-8").decode(buffer);
   }
 
-  throw new Error("Formato no soportado. Sube PDF, Word (.doc/.docx), imagen (PNG/JPG), página web (.html), TXT, Markdown o CSV.");
+  throw new Error("Formato no soportado. Sube PDF, Word (.doc/.docx), Excel (.xlsx), PowerPoint (.pptx), imagen (PNG/JPG), página web (.html), TXT, Markdown o CSV.");
 }
 
 // ---- Embeddings (opcionales, Voyage AI) ----------------------------------
@@ -204,6 +214,11 @@ export function documentType(...names: (string | null | undefined)[]): string | 
     if (/\b(flyer|brochure|folleto|catalogo|leaflet)\b/.test(t)) return "Material comercial (flyer)";
   }
   return null;
+}
+
+/** Documentos del Sistema de Gestión Integrado (uso interno: auditorías, procedimientos). */
+export function isSgiDocument(...names: (string | null | undefined)[]): boolean {
+  return names.some((n) => n && /\bsgi\b|sistema (de )?gesti[oó]n/i.test(n.replace(/[_.]+/g, " ")));
 }
 
 export interface KbMatch {

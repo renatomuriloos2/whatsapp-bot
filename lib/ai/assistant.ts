@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AccessLevel, BotSettings } from "@/types/database";
 import { ACCESS_LEVEL_LABELS, costUsd, supportsServerFallback, TokenUsage } from "@/lib/ai/models";
-import { documentType, KbMatch, searchKnowledge } from "@/lib/knowledge";
+import { documentType, isSgiDocument, KbMatch, searchKnowledge } from "@/lib/knowledge";
 import {
   findDocumentsByName,
   findSendableDocument,
@@ -92,6 +92,7 @@ ${settings.instructions.trim()}
   3. El flyer sirve para beneficios y presentación comercial, nunca por encima de la TDS o la MSDS.
   Si para un producto solo te llegaron fragmentos del flyer y la pregunta es técnica, usa buscar_conocimiento con "ficha técnica <producto>" antes de responder.
 - Si dos documentos se contradicen (ej. la TDS dice una cosa y el flyer otra), NUNCA se lo menciones al cliente ni le muestres dudas internas: responde con la fuente de mayor prioridad según la lista anterior y usa reportar_inconsistencia para avisar al equipo. Si la contradicción es sobre seguridad o un dato crítico y no hay fuente de mayor prioridad, no des ese dato y ofrece confirmarlo con un asesor.
+- Los documentos de tipo "SGI (uso interno)" son del Sistema de Gestión Integrado (procedimientos, registros, formularios, VSM, políticas, auditorías). Úsalos SOLO si la pregunta es sobre el SGI, procesos internos, auditorías, calidad, seguridad, ambiente o formularios internos. Para preguntas de productos, aplicaciones técnicas o clientes ignóralos aunque aparezcan en los fragmentos, y nunca los cites ante un cliente.
 - Recomienda un producto solo para la aplicación principal que su ficha técnica describe. No lo propongas para un proceso que su documentación menciona solo de forma secundaria si existe otro producto específico para ese proceso (ej. no recomiendes un producto de biopulido para descrude si hay uno de descrude).
 - Si la consulta es ambigua o hay varios productos posibles, primero haz 1 o 2 preguntas breves (fibra, proceso, máquina, resultado buscado) en lugar de listar opciones a ciegas.
 - Usa solo la información de esos fragmentos, la que devuelve buscar_conocimiento y lo que el cliente te dijo en la conversación. Si no encuentras el dato, dilo con honestidad y ofrece comunicarle con un asesor; nunca inventes cifras ni recomendaciones técnicas.
@@ -245,7 +246,7 @@ function formatMatches(matches: KbMatch[], sendable: Set<string>): string {
   return matches
     .map((m, i) => {
       const file = sendable.has(m.document_id) ? ` [archivo enviable: id ${m.document_id}]` : "";
-      const type = documentType(m.title, m.category);
+      const type = isSgiDocument(m.category, m.title) ? "SGI (uso interno)" : documentType(m.title, m.category);
       return `[${i + 1}] Documento: ${m.title}${m.category ? ` (${m.category})` : ""}${type ? ` · Tipo: ${type}` : ""}${file}\n${m.content}`;
     })
     .join("\n\n---\n\n");
@@ -422,7 +423,7 @@ export async function generateReply({
               : found.length
               ? found
                   .map((f) => {
-                    const type = documentType(f.title, f.fileName);
+                    const type = isSgiDocument(f.title, f.fileName) ? "SGI (uso interno)" : documentType(f.title, f.fileName);
                     return `- ${f.title}${f.fileName ? ` (${f.fileName})` : ""}${type ? ` · Tipo: ${type}` : ""} [archivo enviable: id ${f.id}]`;
                   })
                   .join("\n")
