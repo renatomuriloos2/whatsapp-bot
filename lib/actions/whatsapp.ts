@@ -528,9 +528,22 @@ export async function resolveAlertAction(formData: FormData) {
 }
 
 /** Envía un aviso de prueba al WhatsApp/correo guardados en Configuración. */
-export async function testNotificationAction(): Promise<string> {
+export async function testNotificationAction(form?: {
+  phone: string;
+  email: string;
+  template: string;
+}): Promise<string> {
   await requireAppUser("admin");
-  const settings = await getBotSettings(createAdminClient());
+  const saved = await getBotSettings(createAdminClient());
+  // Se usa lo que está escrito en el formulario, aunque aún no se haya guardado.
+  const settings = form
+    ? {
+        ...saved,
+        alert_phone: form.phone.replace(/\D/g, "") || null,
+        alert_email: form.email.trim() || null,
+        alert_template: form.template.trim() || null,
+      }
+    : saved;
   const results = await notifyTeam(settings, {
     title: "Aviso de prueba",
     reason: "Si te llegó este mensaje, los avisos del bot están funcionando ✅",

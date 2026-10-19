@@ -39,11 +39,19 @@ function TestNotificationButton() {
         type="button"
         disabled={sending}
         className="btn-secondary"
-        onClick={async () => {
+        onClick={async (e) => {
+          const form = e.currentTarget.form;
+          const value = (name: string) => String(form ? new FormData(form).get(name) ?? "" : "");
           setSending(true);
           setResult(null);
           try {
-            setResult(await testNotificationAction());
+            setResult(
+              await testNotificationAction({
+                phone: value("alert_phone"),
+                email: value("alert_email"),
+                template: value("alert_template"),
+              })
+            );
           } catch {
             setResult("No se pudo enviar.");
           }
@@ -254,7 +262,9 @@ export function SettingsForm({ settings }: { settings: BotSettings }) {
           <p className="mt-1 text-xs text-rethink-cream/50">Requiere RESEND_API_KEY en Vercel.</p>
         </div>
         <TestNotificationButton />
-        <p className="text-xs text-rethink-cream/50">Guarda la configuración antes de enviar el aviso de prueba.</p>
+        <p className="text-xs text-rethink-cream/50">
+          La prueba usa lo que está escrito arriba. Recuerda tocar &quot;Guardar configuración&quot; para que el bot lo use.
+        </p>
       </Section>
 
       <div className="flex items-center gap-4 lg:col-span-2">

@@ -56,7 +56,14 @@ export async function notifyTeam(settings: BotSettings, alert: TeamAlert): Promi
     try {
       const template = settings.alert_template?.trim();
       if (template) {
-        await sendTemplate(phone, template, text);
+        try {
+          await sendTemplate(phone, template, text);
+        } catch (err) {
+          // Plantilla aún en revisión o rechazada: se intenta como mensaje normal
+          // (llega si ese número le escribió al bot en las últimas 24 h).
+          console.warn("[avisos] la plantilla falló, se intenta como texto:", err);
+          await sendText(phone, text);
+        }
       } else {
         // Sin plantilla solo llega si ese número le escribió al bot en las últimas 24 h.
         await sendText(phone, text);
