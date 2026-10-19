@@ -275,6 +275,12 @@ export async function handleIncomingMessage(
     await sendDocuments(supabase, contact, reply.documents);
   }
 
+  if (reply.alerts.length > 0) {
+    await supabase.from("kb_alerts").insert(
+      reply.alerts.map((al) => ({ detail: al.detail, documents: al.documents, contact_id: contact.id, question: msg.text }))
+    );
+  }
+
   if (reply.escalation) {
     await flagAttention(supabase, contact.id, reply.escalation);
   }

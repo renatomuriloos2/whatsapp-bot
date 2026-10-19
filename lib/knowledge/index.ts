@@ -179,6 +179,21 @@ export async function indexDocument(
   return { chunkCount: chunks.length, hasEmbeddings };
 }
 
+/**
+ * Tipo de documento según su título o categoría (o carpeta), para que el bot
+ * priorice la ficha técnica sobre el flyer y la MSDS en temas de seguridad.
+ */
+export function documentType(...names: (string | null | undefined)[]): string | null {
+  for (const raw of names) {
+    if (!raw) continue;
+    const t = raw.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[_.]+/g, " ").toLowerCase();
+    if (/\b(m?sds|hds|hoja(s)? de (datos de )?seguridad|safety data)\b/.test(t)) return "Hoja de seguridad (MSDS)";
+    if (/\b(tds|ficha(s)? tecnica(s)?|technical data|data ?sheet|boletin tecnico)\b/.test(t)) return "Ficha técnica (TDS)";
+    if (/\b(flyer|brochure|folleto|catalogo|leaflet)\b/.test(t)) return "Material comercial (flyer)";
+  }
+  return null;
+}
+
 export interface KbMatch {
   chunk_id: string;
   document_id: string;

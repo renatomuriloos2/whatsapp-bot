@@ -370,3 +370,17 @@ alter table kb_documents add column if not exists storage_path text;
 insert into storage.buckets (id, name, public)
 values ('documentos', 'documentos', false)
 on conflict (id) do nothing;
+create table if not exists kb_alerts (
+  id uuid primary key default gen_random_uuid(),
+  detail text not null,
+  documents text,
+  contact_id uuid references wa_contacts(id) on delete set null,
+  question text,
+  resolved boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+alter table kb_alerts enable row level security;
+drop policy if exists "kb_alerts staff all" on kb_alerts;
+create policy "kb_alerts staff all" on kb_alerts
+  for all using (is_staff()) with check (is_staff());

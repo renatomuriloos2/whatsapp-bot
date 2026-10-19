@@ -419,6 +419,12 @@ export async function testBotAction(prev: TestBotState, formData: FormData): Pro
       adminClient: admin,
     });
 
+    if (reply.alerts.length > 0) {
+      await admin.from("kb_alerts").insert(
+        reply.alerts.map((al) => ({ detail: al.detail, documents: al.documents, question: `(prueba) ${message}` }))
+      );
+    }
+
     await admin.from("ai_usage").insert({
       source: "prueba",
       model: reply.model,
@@ -441,7 +447,11 @@ export async function testBotAction(prev: TestBotState, formData: FormData): Pro
         {
           role: "assistant",
           text:
-            [reply.text, ...reply.documents.map((d) => `📎 (se enviaría el archivo: ${d.title})`)]
+            [
+              reply.text,
+              ...reply.documents.map((d) => `📎 (se enviaría el archivo: ${d.title})`),
+              ...reply.alerts.map((al) => `⚠️ (aviso interno para el equipo, el cliente no lo ve: ${al.detail})`),
+            ]
               .filter(Boolean)
               .join("\n\n") || `(${settings.handoff_message})`,
         },
@@ -495,4 +505,11 @@ export async function deleteCompanyAction(formData: FormData) {
   const supabase = createClient();
   await supabase.from("companies").delete().eq("id", String(formData.get("id")));
   revalidatePath("/empresas");
+}
+
+export async function resolveAlertAction(formData: FormData) {
+  await requireAppUser();
+  const supabase = createClient();
+  await supabase.from("kb_alerts").update({ resolved: true }).eq("id", String(formData.get("id")));
+  revalidatePath("/conocimiento");
 }

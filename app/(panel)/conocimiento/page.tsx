@@ -4,7 +4,7 @@ import { getAllCompanies } from "@/lib/data";
 import { DocumentForm } from "@/components/whatsapp/DocumentForm";
 import { BulkUploadForm } from "@/components/whatsapp/BulkUploadForm";
 import { AccessLevelBadge } from "@/components/whatsapp/Badges";
-import { toggleDocumentAction } from "@/lib/actions/whatsapp";
+import { resolveAlertAction, toggleDocumentAction } from "@/lib/actions/whatsapp";
 import { formatDate } from "@/lib/utils";
 import { KbDocument } from "@/types/database";
 
@@ -24,11 +24,25 @@ export default async function ConocimientoPage({
     .order("updated_at", { ascending: false });
   if (q) query = query.or(`title.ilike.%${q.replace(/[%,()]/g, "")}%,category.ilike.%${q.replace(/[%,()]/g, "")}%`);
 
-  const [{ data }, companies, { data: fileRows }] = await Promise.all([
+  const [{ data }, companies, { data: fileRows }, { data: alertRows }] = await Promise.all([
     query,
     getAllCompanies(supabase),
     supabase.from("kb_documents").select("file_name").not("file_name", "is", null),
+    // Si la tabla aún no existe (falta la migración 005) simplemente no hay avisos.
+    supabase
+      .from("kb_alerts")
+      .select("id, detail, documents, question, created_at")
+      .eq("resolved", false)
+      .order("created_at", { ascending: false })
+      .limit(50),
   ]);
+  const alerts = (alertRows ?? []) as {
+    id: string;
+    detail: string;
+    documents: string | null;
+    question: string | null;
+    created_at: string;
+  }[];
   const existingFileNames = (fileRows ?? []).map((r) => r.file_name as string);
   const docs = (data ?? []) as (Omit<KbDocument, "content" | "description" | "created_by" | "created_at"> & {
     source_id: string | null;
@@ -43,6 +57,38 @@ export default async function ConocimientoPage({
         frecuentes. Cada documento tiene un nivel de acceso; el bot solo usa los documentos que el
         contacto puede ver.
       </p>
+
+      {alerts.length > 0 && (
+        <div className="card mb-6 border border-rethink-amber/40">
+          <h2 className="text-sm font-medium text-rethink-amber">
+            ⚠️ Documentos para revisar ({alerts.length})
+          </h2>
+          <p className="mb-3 mt-1 text-xs text-rethink-cream/50">
+            El bot encontró contradicciones o datos dudosos entre documentos. Al cliente le respondió con la
+            fuente más confiable (TDS o MSDS) sin mencionarlo. Corrige el documento y marca el aviso como resuelto.
+          </p>
+          <ul className="flex flex-col gap-3">
+            {alerts.map((a) => (
+              <li key={a.id} className="flex flex-col gap-2 rounded-lg bg-surface/5 p-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="text-sm text-rethink-cream/80">
+                  <p>{a.detail}</p>
+                  <p className="mt-1 text-xs text-rethink-cream/50">
+                    {a.documents ? `Documentos: ${a.documents} · ` : ""}
+                    {formatDate(a.created_at)}
+                    {a.question ? ` · Pregunta: "${a.question}"` : ""}
+                  </p>
+                </div>
+                <form action={resolveAlertAction}>
+                  <input type="hidden" name="id" value={a.id} />
+                  <button type="submit" className="btn-secondary whitespace-nowrap text-xs">
+                    Marcar resuelto
+                  </button>
+                </form>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <details className="card mb-6">
         <summary className="cursor-pointer text-sm font-medium text-rethink-cream">

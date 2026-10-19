@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AccessLevel, BotSettings } from "@/types/database";
 import { ACCESS_LEVEL_LABELS, costUsd, supportsServerFallback, TokenUsage } from "@/lib/ai/models";
-import { KbMatch, searchKnowledge } from "@/lib/knowledge";
+import { documentType, KbMatch, searchKnowledge } from "@/lib/knowledge";
 import {
   findDocumentsByName,
   findSendableDocument,
@@ -42,6 +42,13 @@ export interface AssistantReply {
   sources: string[];
   /** Archivos que el bot decidió enviar (se mandan después del texto). */
   documents: SendableDocument[];
+  /** Contradicciones entre documentos detectadas por el bot (solo para el equipo). */
+  alerts: KbAlert[];
+}
+
+export interface KbAlert {
+  detail: string;
+  documents: string;
 }
 
 let anthropic: Anthropic | null = null;
@@ -70,6 +77,14 @@ ${settings.instructions.trim()}
 ## Cómo responder
 - Responde en el idioma del cliente (normalmente español), con tono cordial y profesional.
 - Junto a cada mensaje recibes los fragmentos de la base de conocimiento que el sistema encontró automáticamente para esa pregunta. Si alcanzan, responde directamente con ellos. Solo si no alcanzan o no son del tema, usa buscar_conocimiento con otras palabras (nombres de productos, equipos o parámetros).
+- Cada fragmento indica su tipo de documento. Prioridad de las fuentes:
+  1. Para datos técnicos del producto (uso, aplicación, dosis, pH, temperatura, compatibilidad, propiedades): primero la *ficha técnica (TDS)*, después el *material comercial (flyer)*.
+  2. Para seguridad, manipulación, almacenamiento, primeros auxilios, derrames, transporte o composición peligrosa: primero la *hoja de seguridad (MSDS)*.
+  3. El flyer sirve para beneficios y presentación comercial, nunca por encima de la TDS o la MSDS.
+  Si para un producto solo te llegaron fragmentos del flyer y la pregunta es técnica, usa buscar_conocimiento con "ficha técnica <producto>" antes de responder.
+- Si dos documentos se contradicen (ej. la TDS dice una cosa y el flyer otra), NUNCA se lo menciones al cliente ni le muestres dudas internas: responde con la fuente de mayor prioridad según la lista anterior y usa reportar_inconsistencia para avisar al equipo. Si la contradicción es sobre seguridad o un dato crítico y no hay fuente de mayor prioridad, no des ese dato y ofrece confirmarlo con un asesor.
+- Recomienda un producto solo para la aplicación principal que su ficha técnica describe. No lo propongas para un proceso que su documentación menciona solo de forma secundaria si existe otro producto específico para ese proceso (ej. no recomiendes un producto de biopulido para descrude si hay uno de descrude).
+- Si la consulta es ambigua o hay varios productos posibles, primero haz 1 o 2 preguntas breves (fibra, proceso, máquina, resultado buscado) en lugar de listar opciones a ciegas.
 - Usa solo la información de esos fragmentos, la que devuelve buscar_conocimiento y lo que el cliente te dijo en la conversación. Si no encuentras el dato, dilo con honestidad y ofrece comunicarle con un asesor; nunca inventes cifras ni recomendaciones técnicas.
 - La base de conocimiento ya está filtrada según el nivel de acceso del contacto. Si el cliente pide algo que no aparece, puede ser información reservada: explica que un asesor puede ayudarle y no especules sobre su contenido.
 - Si la consulta implica un riesgo de seguridad (derrames o exposición a químicos, intoxicaciones, quemaduras, incendios), da solo las indicaciones de seguridad generales que estén en la base de conocimiento y deriva de inmediato a un asesor.
@@ -154,6 +169,27 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
     strict: true,
   },
   {
+    name: "reportar_inconsistencia",
+    description:
+      "Avisa internamente al equipo de Rethink que dos documentos de la base de conocimiento se contradicen o que un documento tiene un dato dudoso. El cliente NO ve este aviso. Úsala siempre que detectes una contradicción, y sigue respondiendo al cliente con la fuente de mayor prioridad.",
+    input_schema: {
+      type: "object",
+      properties: {
+        detalle: {
+          type: "string",
+          description: "Qué dice cada documento y en qué se contradicen (ej. 'TDS Think2Clean Pad: biodegradable, sin derivados del petróleo; Flyer: base solvente').",
+        },
+        documentos: {
+          type: "string",
+          description: "Títulos de los documentos involucrados, separados por coma.",
+        },
+      },
+      required: ["detalle", "documentos"],
+      additionalProperties: false,
+    },
+    strict: true,
+  },
+  {
     name: "derivar_a_asesor",
     description:
       "Avisa al equipo humano para que tome la conversación. Úsala cuando el cliente pida una persona, quiera cotizar/comprar, tenga un reclamo o emergencia, o no puedas resolver su consulta. Después de usarla, dile al cliente que un asesor le escribirá.",
@@ -176,7 +212,8 @@ function formatMatches(matches: KbMatch[], sendable: Set<string>): string {
   return matches
     .map((m, i) => {
       const file = sendable.has(m.document_id) ? ` [archivo enviable: id ${m.document_id}]` : "";
-      return `[${i + 1}] Documento: ${m.title}${m.category ? ` (${m.category})` : ""}${file}\n${m.content}`;
+      const type = documentType(m.title, m.category);
+      return `[${i + 1}] Documento: ${m.title}${m.category ? ` (${m.category})` : ""}${type ? ` · Tipo: ${type}` : ""}${file}\n${m.content}`;
     })
     .join("\n\n---\n\n");
 }
@@ -232,6 +269,7 @@ export async function generateReply({
 
   const sources = new Set<string>();
   const documents: SendableDocument[] = [];
+  const alerts: KbAlert[] = [];
 
   // Búsqueda previa con el mensaje del cliente: en la mayoría de las
   // preguntas evita una vuelta extra al modelo solo para decidir qué buscar
@@ -337,7 +375,10 @@ export async function generateReply({
             tool_use_id: block.id,
             content: found.length
               ? found
-                  .map((f) => `- ${f.title}${f.fileName ? ` (${f.fileName})` : ""} [archivo enviable: id ${f.id}]`)
+                  .map((f) => {
+                    const type = documentType(f.title, f.fileName);
+                    return `- ${f.title}${f.fileName ? ` (${f.fileName})` : ""}${type ? ` · Tipo: ${type}` : ""} [archivo enviable: id ${f.id}]`;
+                  })
                   .join("\n")
               : "No hay archivos con ese nombre a los que este contacto tenga acceso.",
           });
@@ -371,6 +412,17 @@ export async function generateReply({
           }
         }
         toolResults.push({ type: "tool_result", tool_use_id: block.id, content, is_error: isError });
+      } else if (
+        block.name === "reportar_inconsistencia" &&
+        typeof input.detalle === "string" &&
+        typeof input.documentos === "string"
+      ) {
+        alerts.push({ detail: input.detalle, documents: input.documentos });
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: block.id,
+          content: "Aviso interno registrado. No lo menciones al cliente; respóndele con la fuente de mayor prioridad.",
+        });
       } else if (block.name === "derivar_a_asesor" && typeof input.motivo === "string") {
         escalation = input.motivo;
         toolResults.push({
@@ -412,5 +464,6 @@ export async function generateReply({
     stopReason: response?.stop_reason ?? null,
     sources: Array.from(sources),
     documents: refused ? [] : documents,
+    alerts,
   };
 }
