@@ -445,15 +445,24 @@ export async function testBotAction(prev: TestBotState, formData: FormData): Pro
     const admin = createAdminClient();
     const settings = await getBotSettings(admin);
     let companyName: string | null = null;
+    let internalCompany = false;
     if (companyId) {
-      const { data } = await admin.from("companies").select("name").eq("id", companyId).single();
+      const { data } = await admin.from("companies").select("*").eq("id", companyId).single();
       companyName = data?.name ?? null;
+      internalCompany = data?.interna === true;
     }
 
     const reply = await generateReply({
       settings,
-      // En las pruebas del portal, el nivel Confidencial se trata como personal interno.
-      contact: { name: "Prueba desde el portal", phone: null, level, companyId, companyName, internal: level === "confidencial" },
+      // Misma regla que en WhatsApp: interno marcado a mano o empresa propia.
+      contact: {
+        name: "Prueba desde el portal",
+        phone: null,
+        level,
+        companyId,
+        companyName,
+        internal: formData.get("interno") === "on" || internalCompany,
+      },
       history: prev.history,
       userText: message,
       adminClient: admin,

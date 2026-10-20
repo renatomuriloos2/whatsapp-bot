@@ -13,6 +13,9 @@ test("webhook: acepta solo firmas HMAC válidas de Meta", async () => {
   assert.equal(verifySignature(body + " ", good), false, "cuerpo alterado");
   assert.equal(verifySignature(body, "sha256=" + "0".repeat(64)), false, "firma falsa");
   assert.equal(verifySignature(body, null), false, "sin firma");
+  assert.equal(verifySignature(body, "sha256=" + "z".repeat(64)), false, "firma no hexadecimal");
+  assert.equal(verifySignature(body, good.slice(0, -2)), false, "firma truncada");
+  assert.equal(verifySignature(body, "sha256="), false, "firma vacía");
 });
 
 test("fragmentos: nunca cortan un enlace", async () => {
@@ -89,4 +92,25 @@ test("archivos: un cliente externo Confidencial no recibe archivos del SGI ni de
   const other = row({ title: "Ficha técnica X", category: "TDS", company_id: "empresa-b" });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   assert.equal(await findSendableDocument(fake(other) as any, id, "confidencial", "empresa-a", true), null);
+});
+
+test("presupuesto: suma más de 1000 registros y no oculta errores", async () => {
+  const { monthToDateCost } = await import("../lib/whatsapp/bot");
+  const rows = Array.from({ length: 1001 }, () => ({ cost_usd: 1 }));
+  const fake = (error: { message: string } | null) => ({
+    from: () => ({
+      select: () => ({
+        gte: () => ({
+          order: () => ({
+            range: async (from: number, to: number) =>
+              error ? { data: null, error } : { data: rows.slice(from, Math.min(to + 1, from + 1000)), error: null },
+          }),
+        }),
+      }),
+    }),
+  });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  assert.equal(await monthToDateCost(fake(null) as any), 1001);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await assert.rejects(monthToDateCost(fake({ message: "caída" }) as any), /gasto del mes/);
 });

@@ -23,8 +23,9 @@ export async function requireAppUser(allowedRoles?: Role | Role[]): Promise<AppU
   }
 
   // Los administradores deben entrar con verificación en dos pasos (TOTP).
-  // ADMIN_MFA=off en Vercel la desactiva si alguien queda bloqueado.
-  if (appUser.role === "admin" && process.env.ADMIN_MFA !== "off") {
+  // La base exige lo mismo (migración 012): sin AAL2 las políticas RLS no
+  // le devuelven datos.
+  if (appUser.role === "admin") {
     const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
     if (aal?.currentLevel !== "aal2") redirect("/mfa");
   }

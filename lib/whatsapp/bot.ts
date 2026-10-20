@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { BotSettings, WaContact } from "@/types/database";
 import { generateReply, HistoryTurn } from "@/lib/ai/assistant";
 import { markReadWithTyping, sendDocument, sendText } from "@/lib/whatsapp/cloud-api";
-import { downloadDocumentFile, SendableDocument } from "@/lib/documents/files";
+import { downloadDocumentFile, findSendableDocument, SendableDocument } from "@/lib/documents/files";
 import { notifyTeam } from "@/lib/notifications";
 import { ACCESS_LEVEL_LABELS } from "@/lib/ai/models";
 
@@ -17,15 +17,35 @@ export async function getBotSettings(supabase: SupabaseClient): Promise<BotSetti
   return { ...data, monthly_budget_usd: Number(data.monthly_budget_usd) } as BotSettings;
 }
 
+/**
+ * Gasto de IA del mes. Paginado (PostgREST devuelve máximo 1000 filas por
+ * petición) y sin ocultar errores: si no se puede leer, falla y el mensaje
+ * no se responde con IA (queda marcado para el equipo).
+ */
 export async function monthToDateCost(supabase: SupabaseClient): Promise<number> {
   const start = new Date();
   start.setUTCDate(1);
   start.setUTCHours(0, 0, 0, 0);
-  const { data } = await supabase
-    .from("ai_usage")
-    .select("cost_usd")
-    .gte("created_at", start.toISOString());
-  return (data ?? []).reduce((sum, r) => sum + Number(r.cost_usd), 0);
+  let total = 0;
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from("ai_usage")
+      .select("cost_usd")
+      .gte("created_at", start.toISOString())
+      .order("id", { ascending: true })
+      .range(from, from + 999);
+    if (error) throw new Error(`No se pudo leer el gasto del mes: ${error.message}`);
+    total += (data ?? []).reduce((sum, r) => sum + Number(r.cost_usd), 0);
+    if (!data || data.length < 1000) return total;
+  }
+}
+
+/** Personal interno: marcado a mano o vinculado a la empresa propia (Rethink). */
+async function contactIsInternal(supabase: SupabaseClient, contact: WaContact): Promise<boolean> {
+  if (contact.interno === true) return true;
+  if (!contact.company_id) return false;
+  const { data } = await supabase.from("companies").select("*").eq("id", contact.company_id).single();
+  return data?.interna === true;
 }
 
 async function upsertContact(
@@ -104,6 +124,15 @@ async function sendDocuments(
       const file = await downloadDocumentFile(supabase, doc.id);
       // WhatsApp acepta documentos de hasta 100 MB.
       if (file.data.byteLength > 100 * 1024 * 1024) throw new Error("pesa más de 100 MB");
+      // La descarga puede tardar: justo antes de enviar se vuelve a comprobar
+      // el contacto y el documento (pudieron desactivarlo, restringirlo o
+      // cambiar el nivel, la empresa o la condición interna del contacto).
+      if (!(await stillAllowed(supabase, contact))) return;
+      const sgi = contact.access_level === "confidencial" && (await contactIsInternal(supabase, contact));
+      if (!(await findSendableDocument(supabase, doc.id, contact.access_level, contact.company_id, sgi))) {
+        console.warn(`[bot] archivo "${doc.title}" ya no autorizado para ${contact.id}; no se envía`);
+        continue;
+      }
       const id = await sendDocument(contact.phone, file);
       await supabase.from("wa_messages").insert({
         contact_id: contact.id,
@@ -210,7 +239,9 @@ async function claimConversation(supabase: SupabaseClient, contactId: string): P
       .eq("id", contactId)
       .or(`processing_until.is.null,processing_until.lt.${now.toISOString()}`)
       .select("id");
-    if (error) return true;
+    // Sin la migración 010 la columna no existe: se sigue sin bloqueo, como antes.
+    if (error && /processing_until/.test(error.message)) return true;
+    if (error) throw new Error(`No se pudo tomar la conversación: ${error.message}`);
     if (data?.length) return true;
     if (Date.now() > deadline) return false;
     await new Promise((r) => setTimeout(r, 1500));
@@ -261,6 +292,24 @@ export async function recordIncomingMessage(
  * presupuesto, límite diario, control humano) y, si corresponde, responde.
  */
 export async function processIncomingMessage(
+  supabase: SupabaseClient,
+  recorded: { settings: BotSettings; contact: WaContact },
+  msg: IncomingMessage
+): Promise<void> {
+  try {
+    await processMessage(supabase, recorded, msg);
+  } catch (err) {
+    // Cualquier falla (base, Meta, descarga…) deja el mensaje marcado para
+    // el equipo en lugar de perderse en los logs.
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error("[bot] error procesando mensaje:", detail);
+    await flagAttention(supabase, recorded.contact, `Mensaje sin respuesta por un error: ${detail.slice(0, 300)}`, recorded.settings, {
+      title: "⚠️ Error del bot",
+    }).catch((e) => console.error("[bot] tampoco se pudo marcar la conversación:", e));
+  }
+}
+
+async function processMessage(
   supabase: SupabaseClient,
   { settings, contact: initial }: { settings: BotSettings; contact: WaContact },
   msg: IncomingMessage
@@ -384,16 +433,15 @@ async function respond(
     .map((m) => ({ role: m.direction === "in" ? "user" : "assistant", text: m.body }));
 
   let companyName: string | null = null;
-  let internalCompany = false;
   if (contact.company_id) {
     const { data: company } = await supabase
       .from("companies")
-      .select("*")
+      .select("name")
       .eq("id", contact.company_id)
       .single();
     companyName = company?.name ?? null;
-    internalCompany = company?.interna === true;
   }
+  const internal = await contactIsInternal(supabase, contact);
 
   let reply: Awaited<ReturnType<typeof generateReply>>;
   try {
@@ -405,8 +453,7 @@ async function respond(
       level: contact.access_level,
       companyId: contact.company_id,
       companyName,
-      // Personal interno: marcado a mano o vinculado a la empresa propia (Rethink).
-      internal: contact.interno === true || internalCompany,
+      internal,
     },
     history,
     userText: opts.userText,
@@ -532,19 +579,26 @@ export async function resumeAfterApproval(supabase: SupabaseClient, contactId: s
   if (!contact || !settings.enabled || contact.bot_paused || contact.status !== "activo") return false;
   const lastIn = contact.last_inbound_at ? new Date(contact.last_inbound_at).getTime() : 0;
   if (Date.now() - lastIn > 23.5 * 60 * 60 * 1000) return false;
-
-  const { data: lastClient } = await supabase
-    .from("wa_messages")
-    .select("body")
-    .eq("contact_id", contact.id)
-    .eq("direction", "in")
-    .order("created_at", { ascending: false })
-    .limit(5);
-  await respond(supabase, settings, contact, {
-    userText: "[Aviso del sistema: el equipo aprobó el registro de este contacto]",
-    searchQuery: (lastClient ?? []).map((m) => m.body).join(" ").slice(0, 500),
-    systemNote: `El equipo de ${settings.company_name} acaba de aprobar el registro de este contacto (ahora tiene nivel ${ACCESS_LEVEL_LABELS[contact.access_level]}). Escríbele un mensaje breve y cordial avisándole que ya quedó registrado y entrégale lo que había pedido en la conversación (si era un archivo, usa enviar_documento). No menciones este aviso del sistema.`,
-  });
+  // Mismos controles que un mensaje normal: presupuesto y una sola respuesta
+  // en curso por conversación.
+  if ((await monthToDateCost(supabase)) >= settings.monthly_budget_usd) return false;
+  if (!(await claimConversation(supabase, contact.id))) return false;
+  try {
+    const { data: lastClient } = await supabase
+      .from("wa_messages")
+      .select("body")
+      .eq("contact_id", contact.id)
+      .eq("direction", "in")
+      .order("created_at", { ascending: false })
+      .limit(5);
+    await respond(supabase, settings, contact, {
+      userText: "[Aviso del sistema: el equipo aprobó el registro de este contacto]",
+      searchQuery: (lastClient ?? []).map((m) => m.body).join(" ").slice(0, 500),
+      systemNote: `El equipo de ${settings.company_name} acaba de aprobar el registro de este contacto (ahora tiene nivel ${ACCESS_LEVEL_LABELS[contact.access_level]}). Escríbele un mensaje breve y cordial avisándole que ya quedó registrado y entrégale lo que había pedido en la conversación (si era un archivo, usa enviar_documento). No menciones este aviso del sistema.`,
+    });
+  } finally {
+    await releaseConversation(supabase, contact.id);
+  }
   await supabase.from("wa_contacts").update({ needs_attention: false, attention_reason: null }).eq("id", contact.id);
   return true;
 }

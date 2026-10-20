@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { indexDocument } from "@/lib/knowledge";
@@ -57,12 +58,16 @@ export async function POST(request: Request) {
   const supabase = createAdminClient();
   const { data: existing } = await supabase
     .from("kb_documents")
-    .select("id, content")
+    .select("id, content, external_etag")
     .is("source_id", null)
     .eq("external_id", key)
     .maybeSingle();
 
-  if (existing && existing.content === content) {
+  // external_etag = huella del contenido que quedó indexado completo. Si la
+  // indexación anterior falló, no coincide y se reintenta aunque el
+  // contenido sea el mismo.
+  const hash = crypto.createHash("sha256").update(content).digest("hex");
+  if (existing && existing.content === content && existing.external_etag === hash) {
     return NextResponse.json({ ok: true, status: "sin cambios" });
   }
 
@@ -85,6 +90,7 @@ export async function POST(request: Request) {
     access_level: level,
     content,
     external_id: key,
+    external_etag: null,
     updated_at: new Date().toISOString(),
   };
   const { data: doc, error } = existing
@@ -93,5 +99,6 @@ export async function POST(request: Request) {
   if (error || !doc) return NextResponse.json({ error: error?.message ?? "No se pudo guardar." }, { status: 500 });
 
   const { chunkCount } = await indexDocument(supabase, doc);
+  await supabase.from("kb_documents").update({ external_etag: hash }).eq("id", doc.id);
   return NextResponse.json({ ok: true, status: existing ? "actualizado" : "creado", chunks: chunkCount });
 }

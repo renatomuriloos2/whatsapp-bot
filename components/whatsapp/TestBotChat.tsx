@@ -71,6 +71,13 @@ export function TestBotChat({ companies }: { companies: Pick<Company, "id" | "na
           <h3 className="text-sm font-medium text-rethink-cream">Simular contacto</h3>
           <LevelSelect />
           <CompanySelect companies={companies} label="Empresa" emptyLabel="Sin empresa" />
+          <label className="flex items-start gap-2 text-sm">
+            <input type="checkbox" name="interno" className="mt-1" />
+            <span>
+              Personal interno
+              <span className="block text-xs opacity-70">Los contactos de Rethink ya cuentan como internos.</span>
+            </span>
+          </label>
           <button type="submit" name="reset" value="true" formNoValidate className="btn-secondary">
             Nueva conversación
           </button>

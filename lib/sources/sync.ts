@@ -107,7 +107,9 @@ export async function syncSource(
           content,
           source_id: source.id,
           external_id: item.id,
-          external_etag: version,
+          // La versión se confirma solo cuando el índice quedó completo: si
+          // la indexación falla, la próxima sincronización lo reintenta.
+          external_etag: null,
           external_url: item.webUrl,
           updated_at: new Date().toISOString(),
         };
@@ -118,6 +120,11 @@ export async function syncSource(
           .single();
         if (upsertError) throw new Error(upsertError.message);
         await indexDocument(supabase, doc);
+        const { error: versionError } = await supabase
+          .from("kb_documents")
+          .update({ external_etag: version })
+          .eq("id", doc.id);
+        if (versionError) throw new Error(versionError.message);
         if (prev) result.updated++;
         else result.added++;
       } catch (err) {
