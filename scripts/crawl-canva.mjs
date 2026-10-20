@@ -79,10 +79,11 @@ function richTexts(o, out = [], depth = 0) {
 
 function canvaLabels(html) {
   const boot = readBootstrap(html);
-  const runLabels = new Map();
-  const imageLabels = new Map();
+  const runLabels = new Map(); // texto exacto del enlace
+  const imageLabels = new Map(); // texto más cercano (aproximado)
   const pages = boot?.page?.A?.A;
   if (!Array.isArray(pages)) return { runLabels, imageLabels };
+  const urlsIn = (x) => new Set(x.runs.filter((r) => r.url).map((r) => r.url));
   const kids = (e) => (Array.isArray(e.c) && e.c[0] && e.c[0]["A?"] ? e.c : []);
   const flatten = (els, ox = 0, oy = 0, sx = 1, sy = 1, out = []) => {
     for (const e of els || []) {
@@ -109,11 +110,15 @@ function canvaLabels(html) {
     for (const x of texts) for (const run of x.runs) {
       if (!run.url) continue;
       let label = cleanText(run.text);
-      if (!label || GENERIC_RE.test(label) || label.length < 3) {
+      // Un solo enlace en el cuadro de texto: el texto completo es su nombre
+      // (evita nombres partidos como "MATRIZ DE MODO Y").
+      if (urlsIn(x).size === 1 && x.t.length <= 100 && !/(^|\s)(INICIO|Da click)(\s|$)/i.test(x.t)) label = x.t;
+      if (label && !GENERIC_RE.test(label) && label.length >= 3) {
+        if (!runLabels.has(run.url) || runLabels.get(run.url).length < label.length) runLabels.set(run.url, label);
+      } else {
         const n = near(x.r, x);
-        label = n && n.d < 400 ? n.t : "";
+        if (n && n.d < 400 && !imageLabels.has(run.url)) imageLabels.set(run.url, n.t);
       }
-      if (label && !runLabels.has(run.url)) runLabels.set(run.url, label);
     }
     for (const it of items) {
       const u = it.e.G;
