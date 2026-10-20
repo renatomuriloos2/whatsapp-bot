@@ -25,7 +25,7 @@ const COLLECT = `(() => {
     .filter((el) => { const t = clean(el.innerText); if (!t || t.length > 150) return false;
       return !Array.from(el.children).some((c) => clean(c.innerText) === t); })
     .map((el) => ({ text: clean(el.innerText), r: el.getBoundingClientRect(), size: parseFloat(getComputedStyle(el).fontSize) || 0 }))
-    .filter((t) => vis(t.r) && !generic.test(t.text) && !/^(Terms|Designed with)/i.test(t.text));
+    .filter((t) => vis(t.r) && !generic.test(t.text) && !/^(Terms|Designed with)/i.test(t.text) && !/(^|\\s)(INICIO|Da click)(\\s|$)/i.test(t.text));
   const heading = texts.slice().sort((a, b) => b.size - a.size)[0];
   const links = Array.from(document.querySelectorAll("a[href]")).filter((a) => /^https?:/.test(a.href)).map((a) => {
     const r = a.getBoundingClientRect();
@@ -41,6 +41,90 @@ const COLLECT = `(() => {
   return { links, heading: heading ? heading.text : "", title: document.title };
 })()`;
 
+// ---- Datos internos de la página de Canva --------------------------------
+// Canva guarda el diseño en un JSON dentro de la página: de ahí sale el texto
+// exacto de cada enlace de texto, y una etiqueta aproximada (texto más cercano)
+// para los íconos con enlace.
+const GENERIC_RE = /^(da|click|clic|da click|da clic|inicio|aqu[ií]|ver|ir|-|\.|i|d)$/i;
+const cleanText = (t) => (t || "").replace(/\s+/g, " ").trim();
+
+function readBootstrap(html) {
+  const m = html.match(/window\['bootstrap'\] = JSON\.parse\('((?:[^'\\]|\\.)*)'\)/);
+  if (!m) return null;
+  try {
+    return JSON.parse(new Function(`return '${m[1]}'`)());
+  } catch {
+    return null;
+  }
+}
+
+function richTexts(o, out = [], depth = 0) {
+  if (!o || typeof o !== "object" || depth > 8) return out;
+  const c = o.C;
+  if (c && Array.isArray(c.A) && Array.isArray(c.B) && Array.isArray(c.C) && c.A.every((x) => typeof x === "string")) {
+    const full = c.A.join("");
+    let pos = 0;
+    const runs = c.B.map((len, i) => {
+      const st = c.C[i] || {};
+      const run = { text: full.slice(pos, pos + len), url: typeof st.Q === "string" ? st.Q : null, size: parseFloat(st.G) || 0 };
+      pos += len;
+      return run;
+    });
+    out.push({ text: full, runs });
+    return out;
+  }
+  for (const [k, v] of Object.entries(o)) if (k !== "c") richTexts(v, out, depth + 1);
+  return out;
+}
+
+function canvaLabels(html) {
+  const boot = readBootstrap(html);
+  const runLabels = new Map();
+  const imageLabels = new Map();
+  const pages = boot?.page?.A?.A;
+  if (!Array.isArray(pages)) return { runLabels, imageLabels };
+  const kids = (e) => (Array.isArray(e.c) && e.c[0] && e.c[0]["A?"] ? e.c : []);
+  const flatten = (els, ox = 0, oy = 0, sx = 1, sy = 1, out = []) => {
+    for (const e of els || []) {
+      const r = { x: ox + (e.A || 0) * sx, y: oy + (e.B || 0) * sy, w: (e.D || 0) * sx, h: (e.C || 0) * sy };
+      out.push({ e, r });
+      const ch = kids(e);
+      if (ch.length) flatten(ch, r.x, r.y, typeof e.b === "number" && e.b ? r.w / e.b : sx, typeof e.a === "number" && e.a ? r.h / e.a : sy, out);
+    }
+    return out;
+  };
+  const center = (a, b) => Math.hypot(a.x + a.w / 2 - (b.x + b.w / 2), a.y + a.h / 2 - (b.y + b.h / 2));
+  for (const p of pages) {
+    const items = flatten(p.E);
+    const texts = [];
+    for (const it of items) for (const rt of richTexts(it.e)) {
+      const t = cleanText(rt.text);
+      if (t) texts.push({ t, r: it.r, size: Math.max(0, ...rt.runs.map((x) => x.size)), runs: rt.runs });
+    }
+    const top = texts.slice().sort((a, b) => b.size - a.size)[0];
+    const near = (r, skip) => texts
+      .filter((x) => x !== skip && x !== top && !GENERIC_RE.test(x.t) && x.t.length <= 120)
+      .map((x) => ({ t: x.t, d: center(r, x.r) }))
+      .sort((a, b) => a.d - b.d)[0];
+    for (const x of texts) for (const run of x.runs) {
+      if (!run.url) continue;
+      let label = cleanText(run.text);
+      if (!label || GENERIC_RE.test(label) || label.length < 3) {
+        const n = near(x.r, x);
+        label = n && n.d < 400 ? n.t : "";
+      }
+      if (label && !runLabels.has(run.url)) runLabels.set(run.url, label);
+    }
+    for (const it of items) {
+      const u = it.e.G;
+      if (typeof u !== "string" || !/^https?:/.test(u)) continue;
+      const n = near(it.r);
+      if (n && n.d < 350 && !imageLabels.has(u)) imageLabels.set(u, n.t);
+    }
+  }
+  return { runLabels, imageLabels };
+}
+
 function tipo(u) {
   if (/jotform|forms\.office|forms\.cloud/.test(u)) return /DesignPage/.test(u) ? "Formulario – edición" : /AnalysisPage/.test(u) ? "Resultados de formulario" : "Formulario";
   if (u.includes("powerbi")) return "Indicadores Power BI";
@@ -53,10 +137,16 @@ function tipo(u) {
 }
 
 /** Mejor nombre para un enlace a partir de todas las veces que apareció. */
-function bestLabel(occ) {
+function bestLabel(occ, labels) {
+  const href = occ[0].href;
+  const fromRun = labels.runLabels.get(href);
+  if (fromRun) return fromRun;
   const options = [];
   for (const o of occ) {
-    const near = o.cands.find((c) => c.d < 300);
+    let near = o.cands.find((c) => c.d < 300);
+    // Título partido en dos líneas ("Reporte de" / "Reporte de Hallazgos del SGI").
+    const longer = near && o.cands.find((c) => c.d < near.d + 40 && c.text.length > near.text.length && c.text.toLowerCase().startsWith(near.text.toLowerCase()));
+    if (longer) near = longer;
     // Texto propio cortado ("Matriz de Partes") → el texto cercano que lo contiene.
     if (o.own && o.own.length >= 4) {
       const fuller = o.cands.find((c) => c.d < 120 && c.text.toLowerCase().includes(o.own.toLowerCase()) && c.text.length > o.own.length);
@@ -64,7 +154,7 @@ function bestLabel(occ) {
     } else if (near) options.push({ text: near.text, score: near.d + 1 });
   }
   options.sort((a, b) => a.score - b.score || b.text.length - a.text.length);
-  return options[0]?.text || "";
+  return options[0]?.text || labels.imageLabels.get(href) || "";
 }
 
 async function crawl() {
@@ -91,7 +181,8 @@ async function crawl() {
     }
     await new Promise((r) => setTimeout(r, 1500));
     const hashes = await page.evaluate(`Array.from(new Set(Array.from(document.querySelectorAll("a[href*='#page']")).map(a => "#" + a.getAttribute("href").split("#")[1])))`);
-    const site = { url, title: await page.title(), sections: new Map() };
+    const html = await page.content();
+    const site = { url, title: await page.title(), sections: new Map(), labels: canvaLabels(html) };
     for (const h of ["", ...hashes]) {
       if (h) {
         await page.goto(url + "/" + h, { waitUntil: "networkidle2", timeout: 60000 }).catch(() => {});
@@ -111,6 +202,14 @@ async function crawl() {
         m.get(l.href).push(l);
       }
     }
+    // Enlaces de texto que el navegador no mostró (secciones ocultas).
+    const shown = new Set([...site.sections.values()].flatMap((m) => [...m.keys()]));
+    for (const [href, label] of site.labels.runLabels) {
+      if (shown.has(href) || /canva\.com\/|instagram\.com|azurewebsites\.net|#page/.test(href)) continue;
+      if (/\.my\.canva\.site/.test(href)) { queue.push(href); continue; }
+      if (!site.sections.has("Otros enlaces")) site.sections.set("Otros enlaces", new Map());
+      site.sections.get("Otros enlaces").set(href, [{ href, own: label, cands: [] }]);
+    }
     sites.push(site);
   }
   await browser.close();
@@ -129,11 +228,18 @@ function toMarkdown({ sites, failed }) {
     const blocks = [];
     for (const [sec, links] of site.sections) {
       const lines = [];
-      for (const [href, occ] of links) {
+      const chosen = new Map([...links].map(([href, occ]) => [href, bestLabel(occ, site.labels)]));
+      const repeats = {};
+      for (const l of chosen.values()) repeats[l] = (repeats[l] || 0) + 1;
+      for (const [href, l] of chosen) {
+        const alt = site.labels.imageLabels.get(href);
+        if (repeats[l] >= 3 && alt && !site.labels.runLabels.has(href)) chosen.set(href, alt);
+      }
+      for (const [href] of links) {
         const key = `${site.url}|${href}`;
         if (done.has(key)) continue;
         done.add(key);
-        const label = bestLabel(occ) || "Enlace sin nombre";
+        const label = chosen.get(href) || "Enlace sin nombre";
         lines.push(`- ${label} (${tipo(href)}): ${href}`);
         count++;
       }
