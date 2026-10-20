@@ -84,7 +84,10 @@ async function uploadMedia(data: ArrayBuffer, fileName: string, mimeType: string
   const form = new FormData();
   form.set("messaging_product", "whatsapp");
   form.set("type", mimeType);
-  form.set("file", new Blob([data], { type: mimeType }), fileName);
+  // Nombre sin tildes en la subida: si no, WhatsApp lo muestra con símbolos
+  // raros ("SocializaciÃ³n"). El nombre real va en el mensaje.
+  const asciiName = fileName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\x20-\x7e]/g, "_");
+  form.set("file", new Blob([data], { type: mimeType }), asciiName);
   const res = await fetch(
     `https://graph.facebook.com/${GRAPH_VERSION}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/media`,
     {

@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { AccessLevel, BotSettings } from "@/types/database";
 import { ACCESS_LEVEL_LABELS, costUsd, supportsServerFallback, TokenUsage } from "@/lib/ai/models";
 import { documentType, isSgiDocument, KbMatch, searchKnowledge } from "@/lib/knowledge";
+import { findLinks } from "@/lib/knowledge/links";
 import {
   findDocumentsByName,
   findSendableDocument,
@@ -98,6 +99,7 @@ ${settings.instructions.trim()}
 - Usa solo la información de esos fragmentos, la que devuelve buscar_conocimiento y lo que el cliente te dijo en la conversación. Si no encuentras el dato, dilo con honestidad y ofrece comunicarle con un asesor; nunca inventes cifras ni recomendaciones técnicas.
 - La base de conocimiento ya está filtrada según el nivel de acceso del contacto. Si el cliente pide algo que no aparece, puede ser información reservada: explica que un asesor puede ayudarle y no especules sobre su contenido.
 - Si la consulta implica un riesgo de seguridad (derrames o exposición a químicos, intoxicaciones, quemaduras, incendios), da solo las indicaciones de seguridad generales que estén en la base de conocimiento y deriva de inmediato a un asesor.
+- Si piden el enlace o link de un formulario, indicador (KPI), procedimiento, matriz, registro, carpeta o documento interno, usa primero buscar_enlace con lo que describen (ej. "proveedor envío muestra"). Si hay varios parecidos, da los más probables con su nombre o pregunta cuál necesitan. Si no aparece, recién entonces di que no lo encontraste.
 - Cuando la información incluye un enlace (formularios, documentos, procedimientos), escribe el enlace completo tal como aparece, para que la persona pueda abrirlo. Nunca inventes ni modifiques un enlace.
 - Si la persona pide un archivo (ficha técnica, hoja de seguridad/MSDS, manual, certificado, formulario) y el documento aparece en los fragmentos con "[archivo enviable: id …]", usa enviar_documento con ese id: el archivo le llegará por WhatsApp justo después de tu mensaje, para que lo descargue. En tu respuesta di brevemente qué le envías (sin pegar enlaces de descarga). Envía solo lo que pidió, máximo ${MAX_DOCUMENTS} archivos. Si el archivo pedido no aparece marcado así en los fragmentos, usa buscar_archivo con el nombre del producto o documento antes de concluir que no lo tienes; solo si tampoco aparece ahí, dilo y ofrece un asesor.
 - Si alguien pide acceso a información para clientes o a información interna/confidencial (ej. dice ser cliente de la empresa, distribuidor o empleado de ${settings.company_name}), pídele de forma breve su nombre, empresa y cargo (si no los dio ya), usa solicitar_acceso y dile que el equipo revisará su solicitud y le avisará. Mientras tanto no le des información de ese nivel ni prometas que será aprobada. Si el contexto indica que ya tiene ese nivel, no la uses.
@@ -144,6 +146,23 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
           type: "string",
           description:
             "Palabras clave o pregunta a buscar, en español. Incluye nombres de productos, equipos o parámetros (ej. 'dosis inhibidor de corrosión caldera').",
+        },
+      },
+      required: ["consulta"],
+      additionalProperties: false,
+    },
+    strict: true,
+  },
+  {
+    name: "buscar_enlace",
+    description:
+      "Busca en las listas de enlaces de la empresa (Portal SGI: formularios, KPIs/indicadores, procedimientos, matrices, registros, carpetas) los enlaces cuyo nombre coincide con lo que se pide. Devuelve líneas con nombre, tipo y enlace completo.",
+    input_schema: {
+      type: "object",
+      properties: {
+        consulta: {
+          type: "string",
+          description: "Qué enlace busca la persona, con sus palabras clave (ej. 'envío de muestra proveedor', 'indicadores compras', 'entrega de EPP').",
         },
       },
       required: ["consulta"],
@@ -407,6 +426,18 @@ export async function generateReply({
             content: "La búsqueda falló temporalmente.",
             is_error: true,
           });
+        }
+      } else if (block.name === "buscar_enlace" && typeof input.consulta === "string") {
+        try {
+          const found = await findLinks(adminClient, input.consulta, contact.level, contact.companyId);
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: block.id,
+            content: found.length ? found.join("\n") : "No hay enlaces con ese nombre a los que este contacto tenga acceso.",
+          });
+        } catch (err) {
+          console.error("[assistant] búsqueda de enlaces falló:", err);
+          toolResults.push({ type: "tool_result", tool_use_id: block.id, content: "La búsqueda de enlaces falló temporalmente.", is_error: true });
         }
       } else if (block.name === "buscar_archivo" && typeof input.nombre === "string") {
         try {
