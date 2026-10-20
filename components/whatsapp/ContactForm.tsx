@@ -81,7 +81,7 @@ export function ContactForm({
         <span>
           Personal interno de la empresa
           <span className="block text-xs opacity-70">
-            Solo el personal interno con nivel Confidencial recibe documentos y enlaces del SGI. No lo marques para clientes.
+            Solo el personal interno con nivel Confidencial recibe documentos y enlaces del SGI. Los contactos de Rethink ya cuentan como internos automáticamente; márcalo solo para alguien interno sin empresa asignada. No lo marques para clientes.
           </span>
         </span>
       </label>

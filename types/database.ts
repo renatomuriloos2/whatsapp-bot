@@ -12,6 +12,8 @@ export interface Company {
   id: string;
   name: string;
   notes: string | null;
+  /** Empresa propia (Rethink): sus contactos cuentan como personal interno (migración 011). */
+  interna?: boolean;
   created_at: string;
 }
 

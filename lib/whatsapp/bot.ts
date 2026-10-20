@@ -384,13 +384,15 @@ async function respond(
     .map((m) => ({ role: m.direction === "in" ? "user" : "assistant", text: m.body }));
 
   let companyName: string | null = null;
+  let internalCompany = false;
   if (contact.company_id) {
     const { data: company } = await supabase
       .from("companies")
-      .select("name")
+      .select("*")
       .eq("id", contact.company_id)
       .single();
     companyName = company?.name ?? null;
+    internalCompany = company?.interna === true;
   }
 
   let reply: Awaited<ReturnType<typeof generateReply>>;
@@ -403,7 +405,8 @@ async function respond(
       level: contact.access_level,
       companyId: contact.company_id,
       companyName,
-      internal: contact.interno === true,
+      // Personal interno: marcado a mano o vinculado a la empresa propia (Rethink).
+      internal: contact.interno === true || internalCompany,
     },
     history,
     userText: opts.userText,

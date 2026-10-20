@@ -410,3 +410,5 @@ alter table wa_contacts add column if not exists processing_until timestamptz;
 -- Las funciones de rol no se ejecutan sin sesión.
 revoke execute on function public.auth_role(), public.is_admin(), public.is_staff() from public, anon;
 grant execute on function public.auth_role(), public.is_admin(), public.is_staff() to authenticated, service_role;
+-- Empresa interna (Rethink): sus contactos cuentan como personal interno.
+alter table companies add column if not exists interna boolean not null default false;
