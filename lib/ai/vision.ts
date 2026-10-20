@@ -1,5 +1,7 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { costUsd } from "@/lib/ai/models";
 
 // Convierte una imagen (diagrama, flujograma, VSM, foto de una ficha) en texto
 // para la base de conocimiento: el bot no "ve" imágenes al responder, así que
@@ -50,6 +52,21 @@ Responde solo con el contenido, sin introducción.`,
       },
     ],
   });
+  // Se registra en Costos de IA (fuente "documentos"); si falla no importa.
+  try {
+    const usage = {
+      input_tokens: response.usage.input_tokens,
+      output_tokens: response.usage.output_tokens,
+      cache_read_tokens: response.usage.cache_read_input_tokens ?? 0,
+      cache_write_tokens: response.usage.cache_creation_input_tokens ?? 0,
+    };
+    await createAdminClient()
+      .from("ai_usage")
+      .insert({ source: "documentos", model: response.model, ...usage, cost_usd: costUsd(response.model, usage) });
+  } catch (err) {
+    console.warn("[vision] no se pudo registrar el costo:", err);
+  }
+
   return response.content
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
     .map((b) => b.text)

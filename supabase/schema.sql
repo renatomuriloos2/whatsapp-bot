@@ -387,3 +387,6 @@ create policy "kb_alerts staff all" on kb_alerts
 alter table bot_settings add column if not exists alert_phone text;
 alter table bot_settings add column if not exists alert_email text;
 alter table bot_settings add column if not exists alert_template text;
+alter table ai_usage drop constraint if exists ai_usage_source_check;
+alter table ai_usage add constraint ai_usage_source_check
+  check (source in ('whatsapp', 'prueba', 'documentos'));

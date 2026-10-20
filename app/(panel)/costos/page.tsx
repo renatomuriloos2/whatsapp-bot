@@ -55,6 +55,9 @@ export default async function CostosPage() {
   );
 
   const testCost = sumUsage(rows.filter((r) => r.source === "prueba")).cost;
+  const docsCost = sumUsage(rows.filter((r) => r.source === "documentos")).cost;
+  const whatsappRows = rows.filter((r) => r.source === "whatsapp");
+  const perReply = whatsappRows.length ? sumUsage(whatsappRows).cost / whatsappRows.length : 0;
   const daily = dailySeries(rows, 30);
 
   return (
@@ -136,6 +139,17 @@ export default async function CostosPage() {
           {testCost > 0 && (
             <p className="mt-3 text-xs text-rethink-cream/50">
               Incluye {formatUsd(testCost, 4)} de pruebas desde el portal.
+            </p>
+          )}
+          {docsCost > 0 && (
+            <p className="mt-1 text-xs text-rethink-cream/50">
+              Incluye {formatUsd(docsCost, 4)} de lectura de imágenes al subir documentos.
+            </p>
+          )}
+          {perReply > 0 && (
+            <p className="mt-1 text-xs text-rethink-cream/50">
+              Costo promedio por respuesta del bot en WhatsApp: {formatUsd(perReply, 4)} ({whatsappRows.length}{" "}
+              respuestas).
             </p>
           )}
         </div>
