@@ -1,4 +1,5 @@
 import "server-only";
+import { buildDocumentCard } from "@/lib/knowledge/enrich";
 import { imageToText, isImageName } from "@/lib/ai/vision";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AccessLevel } from "@/types/database";
@@ -151,21 +152,56 @@ async function embed(texts: string[], inputType: "document" | "query"): Promise<
 }
 
 /**
- * (Re)genera los fragmentos de un documento. Borra los anteriores, inserta
- * los nuevos y, si hay VOYAGE_API_KEY, calcula sus embeddings.
+ * (Re)genera los fragmentos de un documento. Primero arma su "ficha" con IA
+ * (resumen, tipo, productos, palabras clave); las palabras clave van en el
+ * encabezado de cada fragmento, que pesa más en la búsqueda. Luego borra los
+ * fragmentos anteriores, inserta los nuevos y, si hay VOYAGE_API_KEY, calcula
+ * sus embeddings.
  */
 export async function indexDocument(
   supabase: SupabaseClient,
-  doc: { id: string; title: string; content: string }
+  doc: { id: string; title: string; content: string },
+  { enrich = true }: { enrich?: boolean } = {}
 ): Promise<{ chunkCount: number; hasEmbeddings: boolean }> {
   const chunks = chunkText(doc.content);
+
+  const { data: meta } = await supabase
+    .from("kb_documents")
+    .select("category, file_name, doc_type, products, keywords")
+    .eq("id", doc.id)
+    .maybeSingle();
+  let card: { docType: string | null; products: string; keywords: string } = {
+    docType: meta?.doc_type ?? null,
+    products: meta?.products ?? "",
+    keywords: meta?.keywords ?? "",
+  };
+  if (enrich) {
+    const built = await buildDocumentCard(supabase, { ...doc, category: meta?.category, file_name: meta?.file_name });
+    if (built) {
+      card = { docType: built.docType, products: built.products.join(", "), keywords: built.keywords.join(", ") };
+      await supabase
+        .from("kb_documents")
+        .update({
+          summary: built.summary,
+          doc_type: built.docType,
+          products: card.products,
+          keywords: card.keywords,
+          enriched_at: new Date().toISOString(),
+        })
+        .eq("id", doc.id);
+    }
+  }
+  const heading = [doc.title, meta?.category, card.docType, card.products, card.keywords]
+    .filter(Boolean)
+    .join(" | ")
+    .slice(0, 1500);
 
   let embeddings: number[][] | null = null;
   if (embeddingsEnabled() && chunks.length > 0) {
     try {
       embeddings = [];
       for (let i = 0; i < chunks.length; i += 64) {
-        const batch = chunks.slice(i, i + 64).map((c) => `${doc.title}\n\n${c}`);
+        const batch = chunks.slice(i, i + 64).map((c) => `${heading}\n\n${c}`);
         embeddings.push(...(await embed(batch, "document")));
       }
     } catch (err) {
@@ -182,7 +218,7 @@ export async function indexDocument(
     const rows = chunks.map((content, i) => ({
       document_id: doc.id,
       chunk_index: i,
-      heading: doc.title,
+      heading,
       content,
       embedding: embeddings ? JSON.stringify(embeddings[i]) : null,
     }));
@@ -252,13 +288,24 @@ export async function searchKnowledge(
     }
   }
 
+  // Se piden más fragmentos de los necesarios y se dejan máximo 2 por
+  // documento: así un documento largo no tapa a los demás candidatos.
   const { data, error } = await adminClient.rpc("match_kb_chunks", {
     query_text: query,
     query_embedding: queryEmbedding,
     allowed_levels: allowedLevels(level),
     p_company_id: companyId,
-    match_count: limit,
+    match_count: limit * 3,
   });
   if (error) throw new Error(error.message);
-  return (data ?? []) as KbMatch[];
+  const perDoc = new Map<string, number>();
+  const out: KbMatch[] = [];
+  for (const m of (data ?? []) as KbMatch[]) {
+    const n = perDoc.get(m.document_id) ?? 0;
+    if (n >= 2) continue;
+    perDoc.set(m.document_id, n + 1);
+    out.push(m);
+    if (out.length >= limit) break;
+  }
+  return out;
 }

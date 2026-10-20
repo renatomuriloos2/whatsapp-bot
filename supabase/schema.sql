@@ -390,3 +390,8 @@ alter table bot_settings add column if not exists alert_template text;
 alter table ai_usage drop constraint if exists ai_usage_source_check;
 alter table ai_usage add constraint ai_usage_source_check
   check (source in ('whatsapp', 'prueba', 'documentos'));
+alter table kb_documents add column if not exists summary text;
+alter table kb_documents add column if not exists doc_type text;
+alter table kb_documents add column if not exists products text;
+alter table kb_documents add column if not exists keywords text;
+alter table kb_documents add column if not exists enriched_at timestamptz;

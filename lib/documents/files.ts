@@ -54,6 +54,37 @@ function hasFile(d: DocRow): boolean {
   return Boolean(d.external_id && (provider === "gdrive" || provider === "onedrive"));
 }
 
+export interface DocumentMeta {
+  sendable: boolean;
+  summary: string | null;
+  docType: string | null;
+  /** Enlace al original (Drive / OneDrive), si existe. */
+  url: string | null;
+}
+
+/** Ficha breve de cada documento (para mostrarle al modelo una sola vez). */
+export async function documentMeta(admin: SupabaseClient, ids: string[]): Promise<Map<string, DocumentMeta>> {
+  const out = new Map<string, DocumentMeta>();
+  if (ids.length === 0) return out;
+  const { data, error } = await admin
+    .from("kb_documents")
+    .select(`${DOC_FIELDS}, summary, doc_type, external_url`)
+    .in("id", ids);
+  // Sin la migración 008 las columnas nuevas no existen: se usa lo básico.
+  const rows = (error
+    ? (await admin.from("kb_documents").select(DOC_FIELDS).in("id", ids)).data
+    : data) as unknown as (DocRow & { summary?: string; doc_type?: string; external_url?: string })[] | null;
+  for (const d of rows ?? []) {
+    out.set(d.id, {
+      sendable: hasFile(d),
+      summary: d.summary ?? null,
+      docType: d.doc_type ?? null,
+      url: d.external_url ?? null,
+    });
+  }
+  return out;
+}
+
 /** De estos documentos, cuáles tienen un archivo que se puede enviar. */
 export async function sendableDocumentIds(admin: SupabaseClient, ids: string[]): Promise<Set<string>> {
   if (ids.length === 0) return new Set();

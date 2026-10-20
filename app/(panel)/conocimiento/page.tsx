@@ -3,12 +3,15 @@ import { createClient } from "@/lib/supabase/server";
 import { getAllCompanies } from "@/lib/data";
 import { DocumentForm } from "@/components/whatsapp/DocumentForm";
 import { BulkUploadForm } from "@/components/whatsapp/BulkUploadForm";
+import { EnrichButton } from "@/components/whatsapp/EnrichButton";
 import { AccessLevelBadge } from "@/components/whatsapp/Badges";
 import { renameCategoryAction, resolveAlertAction, toggleDocumentAction } from "@/lib/actions/whatsapp";
 import { formatDate } from "@/lib/utils";
 import { KbDocument } from "@/types/database";
 
 export const dynamic = "force-dynamic";
+// El análisis de documentos con IA corre en tandas de ~45 s.
+export const maxDuration = 60;
 
 export default async function ConocimientoPage({
   searchParams,
@@ -36,6 +39,11 @@ export default async function ConocimientoPage({
       .order("created_at", { ascending: false })
       .limit(50),
   ]);
+  // Documentos sin ficha de IA (null si falta la migración 008).
+  const { count: pendingCards, error: cardsError } = await supabase
+    .from("kb_documents")
+    .select("id", { count: "exact", head: true })
+    .is("enriched_at", null);
   const alerts = (alertRows ?? []) as {
     id: string;
     detail: string;
@@ -106,6 +114,22 @@ export default async function ConocimientoPage({
         </p>
         <BulkUploadForm companies={companies} existingFileNames={existingFileNames} />
       </details>
+
+      {(cardsError || (pendingCards ?? 0) > 0) && (
+        <div className="card mb-6 flex flex-col gap-2">
+          <h2 className="text-sm font-medium text-rethink-cream">Ficha inteligente de los documentos</h2>
+          <p className="text-xs text-rethink-cream/50">
+            La IA lee cada documento una vez y le agrega un resumen, el tipo, los productos y palabras clave
+            (con sinónimos), para que el bot lo encuentre aunque pregunten con otras palabras. Los documentos nuevos
+            se analizan solos; este botón procesa los que ya estaban. Costo aproximado: menos de 1 centavo por documento.
+          </p>
+          {cardsError ? (
+            <p className="text-xs text-red-400">Falta correr supabase/migrations/008_metadatos_documentos.sql en Supabase.</p>
+          ) : (
+            <EnrichButton pending={pendingCards ?? 0} />
+          )}
+        </div>
+      )}
 
       {categories.length > 0 && (
         <details className="card mb-6">

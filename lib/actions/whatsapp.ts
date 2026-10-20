@@ -574,3 +574,53 @@ export async function renameCategoryAction(formData: FormData) {
   await supabase.from("kb_documents").update({ category: to }).eq("category", from);
   revalidatePath("/conocimiento");
 }
+
+/**
+ * Genera la ficha con IA (resumen, tipo, productos, palabras clave) de los
+ * documentos que aún no la tienen y los vuelve a indexar. Procesa durante
+ * ~45 s por llamada; el botón del portal la repite hasta terminar.
+ */
+export async function enrichPendingAction(): Promise<{ processed: number; remaining: number; error?: string }> {
+  await requireAppUser("admin");
+  const admin = createAdminClient();
+  const deadline = Date.now() + 45_000;
+  let processed = 0;
+  for (;;) {
+    const { data, error } = await admin
+      .from("kb_documents")
+      .select("id, title, content")
+      .is("enriched_at", null)
+      .order("updated_at", { ascending: false })
+      .limit(4);
+    if (error) {
+      return {
+        processed,
+        remaining: 0,
+        error: error.message.includes("enriched_at")
+          ? "Falta correr supabase/migrations/008_metadatos_documentos.sql en Supabase."
+          : error.message,
+      };
+    }
+    if (!data?.length || Date.now() > deadline) break;
+    const results = await Promise.all(
+      data.map(async (doc) => {
+        try {
+          await indexDocument(admin, doc);
+        } catch (err) {
+          console.error("[ficha] falló", doc.title, err);
+        }
+        // Se marca aunque falle la IA, para no quedar en un bucle.
+        await admin
+          .from("kb_documents")
+          .update({ enriched_at: new Date().toISOString() })
+          .eq("id", doc.id)
+          .is("enriched_at", null);
+        return 1;
+      })
+    );
+    processed += results.length;
+  }
+  const { count } = await admin.from("kb_documents").select("id", { count: "exact", head: true }).is("enriched_at", null);
+  revalidatePath("/conocimiento");
+  return { processed, remaining: count ?? 0 };
+}
