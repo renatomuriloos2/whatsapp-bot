@@ -415,12 +415,17 @@ async function respond(
       .from("wa_contacts")
       .update({ notes: `${contact.notes ? `${contact.notes}\n` : ""}Solicitó acceso ${level}: ${details}. ${r.reason}`.trim() })
       .eq("id", contact.id);
+    // Un solo aviso mientras la solicitud siga pendiente: así nadie puede
+    // llenar de avisos (plantillas pagas) al equipo repitiendo la solicitud.
+    const repeated = (contact.notes ?? "").match(/Solicitó acceso/g)?.length ?? 0;
+    const recent =
+      repeated > 0 && contact.needs_attention && /Solicita acceso/.test(contact.attention_reason ?? "");
     await flagAttention(
       supabase,
       contact,
       `Solicita acceso ${level}${details ? ` (${details})` : ""}: ${r.reason}. Apruébalo cambiando su nivel en Conversaciones.`,
       settings,
-      { always: true, title: `Solicitud de acceso ${level}` }
+      { always: !recent, title: `Solicitud de acceso ${level}` }
     );
   }
 

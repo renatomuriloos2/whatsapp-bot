@@ -73,3 +73,48 @@ Responde solo con el contenido, sin introducción.`,
     .join("\n")
     .trim();
 }
+
+// PDFs escaneados (fotos de páginas, sin texto): Claude lee el PDF como
+// imagen y transcribe su contenido. Límite de la API: 32 MB por solicitud.
+const MAX_PDF_BYTES = 20 * 1024 * 1024;
+
+export async function scannedPdfToText(data: Uint8Array, fileName: string): Promise<string> {
+  if (data.byteLength > MAX_PDF_BYTES) throw new Error("El PDF escaneado pesa más de 20 MB.");
+  if (!process.env.ANTHROPIC_API_KEY) throw new Error("Falta ANTHROPIC_API_KEY.");
+  const workspaceId = process.env.ANTHROPIC_WORKSPACE_ID?.trim();
+  const client = new Anthropic(workspaceId ? { defaultHeaders: { "anthropic-workspace-id": workspaceId } } : {});
+  const response = await client.messages.create({
+    model: VISION_MODEL,
+    max_tokens: 16000,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "document", source: { type: "base64", media_type: "application/pdf", data: Buffer.from(data).toString("base64") } },
+          {
+            type: "text",
+            text: `Este PDF ("${fileName}") es un documento escaneado de una empresa de químicos textiles (por ejemplo una hoja de seguridad o ficha técnica). Transcribe todo su contenido en texto, página por página ("Página N"), sin omitir cifras, unidades, códigos, frases H/P, pictogramas (descríbelos por nombre) ni tablas (como listas o filas "campo: valor"). No agregues nada que no esté en el documento. Responde solo con la transcripción.`,
+          },
+        ],
+      },
+    ],
+  });
+  try {
+    const usage = {
+      input_tokens: response.usage.input_tokens,
+      output_tokens: response.usage.output_tokens,
+      cache_read_tokens: response.usage.cache_read_input_tokens ?? 0,
+      cache_write_tokens: response.usage.cache_creation_input_tokens ?? 0,
+    };
+    await createAdminClient()
+      .from("ai_usage")
+      .insert({ source: "documentos", model: response.model, ...usage, cost_usd: costUsd(response.model, usage) });
+  } catch (err) {
+    console.warn("[vision] no se pudo registrar el costo:", err);
+  }
+  return response.content
+    .filter((b): b is Anthropic.TextBlock => b.type === "text")
+    .map((b) => b.text)
+    .join("\n")
+    .trim();
+}

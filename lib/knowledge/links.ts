@@ -40,7 +40,7 @@ export async function findLinks(
   if (wanted.length === 0) return [];
   const { data, error } = await admin
     .from("kb_documents")
-    .select("title, content, company_id")
+    .select("title, content, company_id, category")
     .eq("active", true)
     .in("access_level", allowedLevels(level))
     .ilike("category", "%enlace%")
@@ -50,6 +50,8 @@ export async function findLinks(
   const scored: { line: string; score: number }[] = [];
   for (const doc of data ?? []) {
     if (doc.company_id && doc.company_id !== companyId) continue;
+    // Listas de enlaces del SGI: solo para contactos Confidenciales.
+    if (level !== "confidencial" && /\bsgi\b/i.test(`${doc.category ?? ""} ${doc.title}`)) continue;
     let site = "";
     let section = "";
     for (const raw of String(doc.content).split("\n")) {

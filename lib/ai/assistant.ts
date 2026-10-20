@@ -311,7 +311,11 @@ async function searchWithFiles(
   contact: ContactContext,
   limit?: number
 ): Promise<{ matches: KbMatch[]; text: string }> {
-  const matches = await searchKnowledge(adminClient, query, contact.level, contact.companyId, limit);
+  // Documentos del SGI: solo para contactos Confidenciales, por regla del
+  // sistema (no solo del prompt), aunque alguien los haya subido con otro nivel.
+  const matches = (await searchKnowledge(adminClient, query, contact.level, contact.companyId, limit)).filter(
+    (m) => contact.level === "confidencial" || !isSgiDocument(m.category, m.title)
+  );
   let meta = new Map<string, DocumentMeta>();
   try {
     meta = await documentMeta(adminClient, Array.from(new Set(matches.map((m) => m.document_id))));

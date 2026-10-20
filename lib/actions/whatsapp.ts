@@ -220,7 +220,7 @@ export async function updateContactAction(
     const supabase = await createClient();
     const id = String(formData.get("id") ?? "");
     const fields = contactFields(formData);
-    const { data: before } = await supabase.from("wa_contacts").select("access_level").eq("id", id).single();
+    const { data: before } = await supabase.from("wa_contacts").select("access_level, company_id").eq("id", id).single();
     const { error } = await supabase
       .from("wa_contacts")
       .update({
@@ -233,8 +233,13 @@ export async function updateContactAction(
 
     // Se aprobó el registro (de Público a Cliente o Confidencial): el bot le
     // escribe y le entrega lo que había pedido.
-    // Nivel más bajo que antes: la IA ya no ve la conversación previa.
-    if (before && ACCESS_LEVELS.indexOf(fields.access_level) < ACCESS_LEVELS.indexOf(before.access_level)) {
+    // Nivel más bajo que antes, o cambio de empresa: la IA ya no ve la
+    // conversación previa (pudo traer información que ya no le corresponde).
+    if (
+      before &&
+      (ACCESS_LEVELS.indexOf(fields.access_level) < ACCESS_LEVELS.indexOf(before.access_level) ||
+        (before.company_id ?? null) !== (fields.company_id ?? null))
+    ) {
       await supabase.from("wa_contacts").update({ history_reset_at: new Date().toISOString() }).eq("id", id);
     }
     if (before?.access_level === "publico" && fields.access_level !== "publico") {

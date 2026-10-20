@@ -45,3 +45,17 @@ test("enlaces: la búsqueda encuentra el formulario por sinónimos y respeta la 
   assert.match(found[0], /Envío de Muestra/);
   assert.ok(!found.some((l) => l.includes("otra.example")), "no muestra enlaces de otra empresa");
 });
+
+test("enlaces: las listas del SGI solo se muestran a contactos Confidenciales", async () => {
+  const { findLinks } = await import("../lib/knowledge/links");
+  const docs = [
+    { title: "SGI - Enlaces del Portal SGI", category: "SGI - Enlaces", content: "- Entrega de EPP (Formulario): https://forms.office.com/r/3", company_id: null },
+  ];
+  const fake = {
+    from: () => ({ select: () => ({ eq: () => ({ in: () => ({ ilike: () => ({ limit: async () => ({ data: docs, error: null }) }) }) }) }) }),
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  assert.equal((await findLinks(fake as any, "entrega de EPP", "cliente", null)).length, 0);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  assert.equal((await findLinks(fake as any, "entrega de EPP", "confidencial", null)).length, 1);
+});

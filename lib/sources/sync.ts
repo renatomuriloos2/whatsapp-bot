@@ -56,6 +56,15 @@ export async function syncSource(
     const gone = partial
       ? []
       : (existingRows ?? []).filter((r) => !seen.has(r.external_id as string)).map((r) => r.id);
+    // Disyuntor: si "desaparecería" una gran parte de la carpeta de golpe
+    // (ej. se quitó el permiso de la cuenta o se vació por error), no se borra
+    // nada y queda el aviso; el equipo revisa antes.
+    const existingCount = existingRows?.length ?? 0;
+    if (gone.length > 5 && gone.length > existingCount * 0.3) {
+      throw new Error(
+        `Se dejarían de ver ${gone.length} de ${existingCount} documentos de golpe. No se borró nada por seguridad: revisa que la carpeta siga compartida y completa. Si el cambio es intencional, desconecta y vuelve a conectar la carpeta.`
+      );
+    }
     if (gone.length > 0) {
       await supabase.from("kb_documents").delete().in("id", gone);
       result.removed = gone.length;

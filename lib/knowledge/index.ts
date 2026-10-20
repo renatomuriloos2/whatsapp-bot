@@ -80,7 +80,19 @@ export async function extractText(file: File): Promise<string> {
         }
       })
     );
-    return pages.join("\n\n");
+    const joined = pages.join("\n\n");
+    // Casi sin texto para la cantidad de páginas = PDF escaneado: se lee con IA.
+    const letters = joined.replace(/\s+/g, "").length;
+    if (letters < Math.max(200, 60 * text.length)) {
+      try {
+        const { scannedPdfToText } = await import("@/lib/ai/vision");
+        const transcribed = await scannedPdfToText(buffer, file.name);
+        if (transcribed.length > letters) return transcribed;
+      } catch (err) {
+        console.error("[knowledge] no se pudo leer el PDF escaneado:", err);
+      }
+    }
+    return joined;
   }
 
   if (name.endsWith(".docx")) {
@@ -191,17 +203,21 @@ export async function indexDocument(
         .eq("id", doc.id);
     }
   }
+  // Encabezado para la búsqueda por palabras (incluye las palabras clave).
   const heading = [doc.title, meta?.category, card.docType, card.products, card.keywords]
     .filter(Boolean)
     .join(" | ")
     .slice(0, 1500);
+  // Para el embedding, un encabezado corto: una lista larga de palabras clave
+  // diluiría el significado del fragmento.
+  const embedHeading = [doc.title, card.docType, card.products].filter(Boolean).join(" | ").slice(0, 300);
 
   let embeddings: number[][] | null = null;
   if (embeddingsEnabled() && chunks.length > 0) {
     try {
       embeddings = [];
       for (let i = 0; i < chunks.length; i += 64) {
-        const batch = chunks.slice(i, i + 64).map((c) => `${heading}\n\n${c}`);
+        const batch = chunks.slice(i, i + 64).map((c) => `${embedHeading}\n\n${c}`);
         embeddings.push(...(await embed(batch, "document")));
       }
     } catch (err) {
@@ -211,8 +227,11 @@ export async function indexDocument(
     }
   }
 
-  const { error: delError } = await supabase.from("kb_chunks").delete().eq("document_id", doc.id);
-  if (delError) throw new Error(delError.message);
+  // Reemplazo sin hueco: primero se insertan los fragmentos nuevos y recién
+  // después se borran los viejos. Si algo falla a mitad, el documento sigue
+  // con su versión anterior en lugar de quedar sin fragmentos.
+  const { data: oldChunks, error: oldError } = await supabase.from("kb_chunks").select("id").eq("document_id", doc.id);
+  if (oldError) throw new Error(oldError.message);
 
   if (chunks.length > 0) {
     const rows = chunks.map((content, i) => ({
@@ -222,10 +241,20 @@ export async function indexDocument(
       content,
       embedding: embeddings ? JSON.stringify(embeddings[i]) : null,
     }));
+    const inserted: string[] = [];
     for (let i = 0; i < rows.length; i += 200) {
-      const { error } = await supabase.from("kb_chunks").insert(rows.slice(i, i + 200));
-      if (error) throw new Error(error.message);
+      const { data: ins, error } = await supabase.from("kb_chunks").insert(rows.slice(i, i + 200)).select("id");
+      if (error) {
+        // Se deshace lo nuevo; queda la versión anterior intacta.
+        if (inserted.length) await supabase.from("kb_chunks").delete().in("id", inserted);
+        throw new Error(error.message);
+      }
+      inserted.push(...(ins ?? []).map((r) => r.id as string));
     }
+  }
+  const oldIds = (oldChunks ?? []).map((r) => r.id as string);
+  for (let i = 0; i < oldIds.length; i += 200) {
+    await supabase.from("kb_chunks").delete().in("id", oldIds.slice(i, i + 200));
   }
 
   const hasEmbeddings = embeddings !== null;

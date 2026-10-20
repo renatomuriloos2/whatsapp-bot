@@ -4,6 +4,7 @@ import { downloadFile } from "@/lib/onedrive/graph";
 import { downloadGdriveOriginal } from "@/lib/sources/gdrive";
 import { allowedLevels } from "@/lib/ai/models";
 import { AccessLevel } from "@/types/database";
+import { isSgiDocument } from "@/lib/knowledge";
 
 // Archivos originales de la base de conocimiento, para enviarlos por
 // WhatsApp cuando un cliente los pide. Se pueden enviar los de carpetas de
@@ -37,6 +38,7 @@ interface DocRow {
   id: string;
   title: string;
   file_name: string | null;
+  category: string | null;
   storage_path: string | null;
   external_id: string | null;
   access_level: AccessLevel;
@@ -46,7 +48,7 @@ interface DocRow {
 }
 
 const DOC_FIELDS =
-  "id, title, file_name, storage_path, external_id, access_level, company_id, active, kb_sources(provider, drive_id)";
+  "id, title, file_name, category, storage_path, external_id, access_level, company_id, active, kb_sources(provider, drive_id)";
 
 function hasFile(d: DocRow): boolean {
   if (d.storage_path) return true;
@@ -113,6 +115,7 @@ export async function findSendableDocument(
   if (!doc || !doc.active || !hasFile(doc)) return null;
   if (!allowedLevels(level).includes(doc.access_level)) return null;
   if (doc.company_id && doc.company_id !== companyId) return null;
+  if (level !== "confidencial" && isSgiDocument(doc.title, doc.file_name, doc.category)) return null;
   return { id: doc.id, title: doc.title };
 }
 
@@ -188,6 +191,7 @@ export async function findDocumentsByName(
 
   return ((data ?? []) as unknown as DocRow[])
     .filter((d) => hasFile(d) && (!d.company_id || d.company_id === companyId))
+    .filter((d) => level === "confidencial" || !isSgiDocument(d.title, d.file_name, d.category))
     .map((d) => {
       const name = normalize(`${d.title} ${d.file_name ?? ""}`);
       const compact = name.replace(/[^a-z0-9]+/g, "");
