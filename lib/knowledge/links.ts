@@ -34,6 +34,8 @@ export async function findLinks(
   query: string,
   level: AccessLevel,
   companyId: string | null,
+  /** Puede ver el SGI: personal interno con nivel Confidencial. */
+  sgi: boolean,
   limit = 8
 ): Promise<string[]> {
   const wanted = roots(query);
@@ -50,8 +52,8 @@ export async function findLinks(
   const scored: { line: string; score: number }[] = [];
   for (const doc of data ?? []) {
     if (doc.company_id && doc.company_id !== companyId) continue;
-    // Listas de enlaces del SGI: solo para contactos Confidenciales.
-    if (level !== "confidencial" && /\bsgi\b/i.test(`${doc.category ?? ""} ${doc.title}`)) continue;
+    // Listas de enlaces del SGI: solo para personal interno.
+    if (!sgi && /\bsgi\b/i.test(`${doc.category ?? ""} ${doc.title}`)) continue;
     let site = "";
     let section = "";
     for (const raw of String(doc.content).split("\n")) {

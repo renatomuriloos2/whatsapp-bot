@@ -402,3 +402,11 @@ alter table ai_usage add column if not exists documents text[];
 -- conversación anterior a ese momento (pudo contener información de su
 -- nivel previo).
 alter table wa_contacts add column if not exists history_reset_at timestamptz;
+
+-- Pertenencia interna (solo personal interno ve el SGI) y una sola
+-- respuesta en curso por conversación.
+alter table wa_contacts add column if not exists interno boolean not null default false;
+alter table wa_contacts add column if not exists processing_until timestamptz;
+-- Las funciones de rol no se ejecutan sin sesión.
+revoke execute on function public.auth_role(), public.is_admin(), public.is_staff() from public, anon;
+grant execute on function public.auth_role(), public.is_admin(), public.is_staff() to authenticated, service_role;

@@ -76,6 +76,15 @@ export function ContactForm({
         emptyLabel="Sin empresa (prospecto)"
       />
       <LevelSelect defaultValue={contact?.access_level} />
+      <label className="flex items-start gap-2 text-sm">
+        <input type="checkbox" name="interno" defaultChecked={contact?.interno ?? false} className="mt-1" />
+        <span>
+          Personal interno de la empresa
+          <span className="block text-xs opacity-70">
+            Solo el personal interno con nivel Confidencial recibe documentos y enlaces del SGI. No lo marques para clientes.
+          </span>
+        </span>
+      </label>
       <div>
         <label className="label" htmlFor="status">
           Estado

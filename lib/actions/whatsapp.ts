@@ -185,7 +185,14 @@ function contactFields(formData: FormData) {
     status: (["activo", "pendiente", "bloqueado"] as const).includes(status) ? status : "activo",
     company_id: optionalId(formData.get("company_id")),
     notes: String(formData.get("notes") ?? "").trim() || null,
+    interno: formData.get("interno") === "on",
   };
+}
+
+/** Sin la migración 010 la columna `interno` no existe: se guarda el resto igual. */
+function withoutInterno<T extends { interno: boolean }>(fields: T): Omit<T, "interno"> {
+  const { interno, ...rest } = fields;
+  return rest;
 }
 
 export async function createContactAction(
@@ -199,7 +206,9 @@ export async function createContactAction(
     if (!phone) {
       return { error: "Número inválido. Usa formato internacional con código de país (ej. +57 300 123 4567)." };
     }
-    const { error } = await supabase.from("wa_contacts").insert({ phone, ...contactFields(formData) });
+    const fields = contactFields(formData);
+    let { error } = await supabase.from("wa_contacts").insert({ phone, ...fields });
+    if (error && /interno/.test(error.message)) ({ error } = await supabase.from("wa_contacts").insert({ phone, ...withoutInterno(fields) }));
     if (error) {
       return { error: error.code === "23505" ? "Ese número ya está registrado." : error.message };
     }
@@ -220,25 +229,25 @@ export async function updateContactAction(
     const supabase = await createClient();
     const id = String(formData.get("id") ?? "");
     const fields = contactFields(formData);
-    const { data: before } = await supabase.from("wa_contacts").select("access_level, company_id").eq("id", id).single();
-    const { error } = await supabase
-      .from("wa_contacts")
-      .update({
-        ...fields,
-        // Al aprobar un número pendiente se quita la alerta de "nuevo número".
-        ...(fields.status === "activo" ? { needs_attention: false, attention_reason: null } : {}),
-      })
-      .eq("id", id);
+    const { data: before } = await supabase.from("wa_contacts").select("*").eq("id", id).single();
+    // Al aprobar un número pendiente se quita la alerta de "nuevo número".
+    const extra = fields.status === "activo" ? { needs_attention: false, attention_reason: null } : {};
+    let { error } = await supabase.from("wa_contacts").update({ ...fields, ...extra }).eq("id", id);
+    if (error && /interno/.test(error.message)) {
+      ({ error } = await supabase.from("wa_contacts").update({ ...withoutInterno(fields), ...extra }).eq("id", id));
+    }
     if (error) return { error: error.message };
 
     // Se aprobó el registro (de Público a Cliente o Confidencial): el bot le
     // escribe y le entrega lo que había pedido.
-    // Nivel más bajo que antes, o cambio de empresa: la IA ya no ve la
-    // conversación previa (pudo traer información que ya no le corresponde).
+    // Nivel más bajo que antes, cambio de empresa o deja de ser personal
+    // interno: la IA ya no ve la conversación previa (pudo traer información
+    // que ya no le corresponde).
     if (
       before &&
       (ACCESS_LEVELS.indexOf(fields.access_level) < ACCESS_LEVELS.indexOf(before.access_level) ||
-        (before.company_id ?? null) !== (fields.company_id ?? null))
+        (before.company_id ?? null) !== (fields.company_id ?? null) ||
+        (before.interno === true && !fields.interno))
     ) {
       await supabase.from("wa_contacts").update({ history_reset_at: new Date().toISOString() }).eq("id", id);
     }
@@ -443,7 +452,8 @@ export async function testBotAction(prev: TestBotState, formData: FormData): Pro
 
     const reply = await generateReply({
       settings,
-      contact: { name: "Prueba desde el portal", phone: null, level, companyId, companyName },
+      // En las pruebas del portal, el nivel Confidencial se trata como personal interno.
+      contact: { name: "Prueba desde el portal", phone: null, level, companyId, companyName, internal: level === "confidencial" },
       history: prev.history,
       userText: message,
       adminClient: admin,

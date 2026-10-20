@@ -10,6 +10,21 @@ export const maxDuration = 60;
 // Crea o actualiza un documento de la base de conocimiento desde un proceso
 // externo (ej. el rastreo diario del Portal SGI en GitHub Actions).
 // Authorization: Bearer CRON_SECRET. El documento se identifica por `key`.
+const MIN_LINKS = 10;
+
+/** Enlaces http(s) distintos y bien formados del documento. */
+function countLinks(text: string): number {
+  const urls = new Set<string>();
+  for (const raw of text.match(/https?:\/\/[^\s)<>"]+/g) ?? []) {
+    try {
+      urls.add(new URL(raw).href);
+    } catch {
+      // URL mal formada: no cuenta.
+    }
+  }
+  return urls.size;
+}
+
 export async function POST(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || request.headers.get("authorization") !== `Bearer ${cronSecret}`) {
@@ -49,6 +64,19 @@ export async function POST(request: Request) {
 
   if (existing && existing.content === content) {
     return NextResponse.json({ ok: true, status: "sin cambios" });
+  }
+
+  // Freno: si el rastreo falló a medias (Canva no cargó, sitio caído), no se
+  // reemplaza la lista vigente por una mucho más corta.
+  const links = countLinks(content);
+  if (links < MIN_LINKS) {
+    return NextResponse.json({ error: `Solo ${links} enlaces válidos (mínimo ${MIN_LINKS}); no se reemplaza.` }, { status: 422 });
+  }
+  if (existing && links < countLinks(existing.content ?? "") * 0.5) {
+    return NextResponse.json(
+      { error: `La lista nueva tiene ${links} enlaces, menos de la mitad de la vigente; no se reemplaza.` },
+      { status: 422 }
+    );
   }
 
   const fields = {

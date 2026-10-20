@@ -22,6 +22,13 @@ export async function requireAppUser(allowedRoles?: Role | Role[]): Promise<AppU
     redirect("/login?sin_acceso=1");
   }
 
+  // Los administradores deben entrar con verificación en dos pasos (TOTP).
+  // ADMIN_MFA=off en Vercel la desactiva si alguien queda bloqueado.
+  if (appUser.role === "admin" && process.env.ADMIN_MFA !== "off") {
+    const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (aal?.currentLevel !== "aal2") redirect("/mfa");
+  }
+
   if (allowedRoles) {
     const allowed = Array.isArray(allowedRoles) ? allowedRoles : [allowedRoles];
     if (!allowed.includes(appUser.role)) {

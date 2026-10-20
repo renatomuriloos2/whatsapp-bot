@@ -54,6 +54,8 @@ export interface WaContact {
   last_inbound_at: string | null;
   /** Desde cuándo la IA ve el historial (se fija al bajar el nivel de acceso). */
   history_reset_at?: string | null;
+  /** Personal interno de la empresa: único que puede recibir documentos del SGI (migración 010). */
+  interno?: boolean;
   last_message_at: string | null;
   created_at: string;
 }

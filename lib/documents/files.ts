@@ -107,7 +107,9 @@ export async function findSendableDocument(
   admin: SupabaseClient,
   id: string,
   level: AccessLevel,
-  companyId: string | null
+  companyId: string | null,
+  /** Puede ver el SGI: personal interno con nivel Confidencial. */
+  sgi: boolean
 ): Promise<SendableDocument | null> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
   const { data } = await admin.from("kb_documents").select(DOC_FIELDS).eq("id", id).maybeSingle();
@@ -115,7 +117,7 @@ export async function findSendableDocument(
   if (!doc || !doc.active || !hasFile(doc)) return null;
   if (!allowedLevels(level).includes(doc.access_level)) return null;
   if (doc.company_id && doc.company_id !== companyId) return null;
-  if (level !== "confidencial" && isSgiDocument(doc.title, doc.file_name, doc.category)) return null;
+  if (!sgi && isSgiDocument(doc.title, doc.file_name, doc.category)) return null;
   return { id: doc.id, title: doc.title };
 }
 
@@ -166,6 +168,7 @@ export async function findDocumentsByName(
   query: string,
   level: AccessLevel,
   companyId: string | null,
+  sgi: boolean,
   limit = 8
 ): Promise<{ id: string; title: string; fileName: string | null }[]> {
   const words = Array.from(
@@ -191,7 +194,7 @@ export async function findDocumentsByName(
 
   return ((data ?? []) as unknown as DocRow[])
     .filter((d) => hasFile(d) && (!d.company_id || d.company_id === companyId))
-    .filter((d) => level === "confidencial" || !isSgiDocument(d.title, d.file_name, d.category))
+    .filter((d) => sgi || !isSgiDocument(d.title, d.file_name, d.category))
     .map((d) => {
       const name = normalize(`${d.title} ${d.file_name ?? ""}`);
       const compact = name.replace(/[^a-z0-9]+/g, "");

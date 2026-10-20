@@ -172,6 +172,54 @@ export interface IncomingMessage {
 // Si el cliente manda varios mensajes seguidos, se espera este tiempo y se
 // responde una sola vez a todos juntos (el último mensaje se encarga).
 const DEBOUNCE_MS = 3500;
+// Una sola respuesta en curso por conversación: quien procesa "toma" la
+// conversación por este tiempo (si la función se cae, vence sola) y los demás
+// esperan hasta MAX_WAIT_MS.
+const CLAIM_MS = 60_000;
+const MAX_WAIT_MS = 25_000;
+
+// Tipos de mensaje de WhatsApp que traen texto (ver messageText).
+const TEXT_TYPES = ["text", "button", "interactive"];
+
+/** Último mensaje de texto del cliente (stickers, audios, etc. no cuentan). */
+async function latestTextMessageId(supabase: SupabaseClient, contactId: string): Promise<string | null> {
+  const { data } = await supabase
+    .from("wa_messages")
+    .select("wa_message_id")
+    .eq("contact_id", contactId)
+    .eq("direction", "in")
+    .in("message_type", TEXT_TYPES)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data?.wa_message_id ?? null;
+}
+
+/**
+ * Toma la conversación de forma atómica en Postgres (UPDATE condicionado).
+ * Espera si otra respuesta está en curso. Si la columna aún no existe
+ * (migración 010 sin correr) sigue sin bloqueo, como antes.
+ */
+async function claimConversation(supabase: SupabaseClient, contactId: string): Promise<boolean> {
+  const deadline = Date.now() + MAX_WAIT_MS;
+  for (;;) {
+    const now = new Date();
+    const { data, error } = await supabase
+      .from("wa_contacts")
+      .update({ processing_until: new Date(now.getTime() + CLAIM_MS).toISOString() })
+      .eq("id", contactId)
+      .or(`processing_until.is.null,processing_until.lt.${now.toISOString()}`)
+      .select("id");
+    if (error) return true;
+    if (data?.length) return true;
+    if (Date.now() > deadline) return false;
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+}
+
+async function releaseConversation(supabase: SupabaseClient, contactId: string) {
+  await supabase.from("wa_contacts").update({ processing_until: null }).eq("id", contactId);
+}
 
 /**
  * Paso 1 (antes de responder 200 a Meta): registra el contacto y guarda el
@@ -222,18 +270,33 @@ export async function processIncomingMessage(
 
   await markReadWithTyping(msg.waMessageId);
 
-  // Mensajes seguidos: solo responde el último, con todos en el historial.
+  // Mensajes seguidos: solo responde el último texto, con todos en el
+  // historial. Un sticker o audio posterior no cancela una pregunta escrita.
   await new Promise((r) => setTimeout(r, DEBOUNCE_MS));
-  const { data: latest } = await supabase
-    .from("wa_messages")
-    .select("wa_message_id")
-    .eq("contact_id", initial.id)
-    .eq("direction", "in")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (latest && latest.wa_message_id !== msg.waMessageId) return;
+  const isLatest = async () => !msg.text || (await latestTextMessageId(supabase, initial.id)) === msg.waMessageId;
+  if (!(await isLatest())) return;
 
+  if (!(await claimConversation(supabase, initial.id))) {
+    // Otra respuesta lleva demasiado tiempo: el equipo lo ve en la bandeja.
+    console.error(`[bot] conversación ${initial.id} ocupada; mensaje ${msg.waMessageId} sin respuesta automática`);
+    await flagAttention(supabase, initial, "Mensaje sin respuesta automática (el bot estaba ocupado con otra respuesta).", settings);
+    return;
+  }
+  try {
+    // Mientras esperaba su turno pudo llegar otro mensaje: ese responde por todos.
+    if (!(await isLatest())) return;
+    await processClaimed(supabase, settings, initial, msg);
+  } finally {
+    await releaseConversation(supabase, initial.id);
+  }
+}
+
+async function processClaimed(
+  supabase: SupabaseClient,
+  settings: BotSettings,
+  initial: WaContact,
+  msg: IncomingMessage
+): Promise<void> {
   // Estado actual del contacto (pudo pasar a atención humana o cambiar de nivel).
   const { data: fresh } = await supabase.from("wa_contacts").select("*").eq("id", initial.id).single();
   const contact = (fresh ?? initial) as WaContact;
@@ -340,6 +403,7 @@ async function respond(
       level: contact.access_level,
       companyId: contact.company_id,
       companyName,
+      internal: contact.interno === true,
     },
     history,
     userText: opts.userText,
@@ -387,17 +451,16 @@ async function respond(
     .insert({ ...usageRow, documents: [...reply.sources, ...reply.documents.map((d) => `archivo: ${d.title}`)] });
   if (usageError) await supabase.from("ai_usage").insert(usageRow);
 
-  // Mientras la IA respondía, alguien pudo tomar el control o bloquear el número.
-  const { data: now } = await supabase.from("wa_contacts").select("bot_paused, status").eq("id", contact.id).single();
-  if (now?.bot_paused || now?.status === "bloqueado") return;
-
+  // Mientras la IA respondía, alguien pudo tomar el control, bloquear el
+  // número o cambiarle los permisos: entonces la respuesta se descarta.
+  if (!(await stillAllowed(supabase, contact))) return;
 
   if (reply.text) {
     await sendAndLog(supabase, contact, reply.text, "bot");
   } else if (reply.documents.length === 0) {
     await sendAndLog(supabase, contact, settings.handoff_message, "sistema");
   }
-  if (reply.documents.length > 0) {
+  if (reply.documents.length > 0 && (await stillAllowed(supabase, contact))) {
     await sendDocuments(supabase, contact, reply.documents, settings);
   }
 
@@ -432,6 +495,26 @@ async function respond(
   if (reply.escalation) {
     await flagAttention(supabase, contact, reply.escalation, settings, { title: "El bot derivó a un asesor" });
   }
+}
+
+/**
+ * Vuelve a leer el contacto justo antes de enviar. Si un humano tomó el
+ * control, lo bloquearon o le cambiaron nivel, empresa, pertenencia interna o
+ * historial desde que empezó la respuesta, no se envía nada.
+ */
+async function stillAllowed(supabase: SupabaseClient, before: WaContact): Promise<boolean> {
+  const { data } = await supabase.from("wa_contacts").select("*").eq("id", before.id).single();
+  const now = data as WaContact | null;
+  const same =
+    !!now &&
+    !now.bot_paused &&
+    now.status === "activo" &&
+    now.access_level === before.access_level &&
+    (now.company_id ?? null) === (before.company_id ?? null) &&
+    (now.interno ?? false) === (before.interno ?? false) &&
+    (now.history_reset_at ?? null) === (before.history_reset_at ?? null);
+  if (!same) console.warn(`[bot] respuesta descartada: el contacto ${before.id} cambió mientras la IA respondía`);
+  return same;
 }
 
 /**

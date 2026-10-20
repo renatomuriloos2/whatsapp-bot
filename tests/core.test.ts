@@ -41,12 +41,12 @@ test("enlaces: la búsqueda encuentra el formulario por sinónimos y respeta la 
     from: () => ({ select: () => ({ eq: () => ({ in: () => ({ ilike: () => ({ limit: async () => ({ data: docs, error: null }) }) }) }) }) }),
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const found = await findLinks(fake as any, "formulario cuando un proveedor quiere enviar una muestra", "confidencial", "empresa-a", 3);
+  const found = await findLinks(fake as any, "formulario cuando un proveedor quiere enviar una muestra", "confidencial", "empresa-a", true, 3);
   assert.match(found[0], /Envío de Muestra/);
   assert.ok(!found.some((l) => l.includes("otra.example")), "no muestra enlaces de otra empresa");
 });
 
-test("enlaces: las listas del SGI solo se muestran a contactos Confidenciales", async () => {
+test("enlaces: las listas del SGI solo se muestran al personal interno", async () => {
   const { findLinks } = await import("../lib/knowledge/links");
   const docs = [
     { title: "SGI - Enlaces del Portal SGI", category: "SGI - Enlaces", content: "- Entrega de EPP (Formulario): https://forms.office.com/r/3", company_id: null },
@@ -55,7 +55,38 @@ test("enlaces: las listas del SGI solo se muestran a contactos Confidenciales", 
     from: () => ({ select: () => ({ eq: () => ({ in: () => ({ ilike: () => ({ limit: async () => ({ data: docs, error: null }) }) }) }) }) }),
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  assert.equal((await findLinks(fake as any, "entrega de EPP", "cliente", null)).length, 0);
+  assert.equal((await findLinks(fake as any, "entrega de EPP", "cliente", null, false)).length, 0);
+  // Cliente externo con nivel Confidencial: no ve el SGI.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  assert.equal((await findLinks(fake as any, "entrega de EPP", "confidencial", null)).length, 1);
+  assert.equal((await findLinks(fake as any, "entrega de EPP", "confidencial", "empresa-a", false)).length, 0);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  assert.equal((await findLinks(fake as any, "entrega de EPP", "confidencial", null, true)).length, 1);
+});
+
+test("archivos: un cliente externo Confidencial no recibe archivos del SGI ni de otra empresa", async () => {
+  const { findSendableDocument } = await import("../lib/documents/files");
+  const id = "11111111-2222-3333-4444-555555555555";
+  const row = (extra: object) => ({
+    id,
+    title: "SGI - Procedimiento de compras",
+    file_name: "PR-COM-01.pdf",
+    category: "SGI",
+    storage_path: `${id}/PR-COM-01.pdf`,
+    external_id: null,
+    access_level: "confidencial",
+    company_id: null,
+    active: true,
+    kb_sources: null,
+    ...extra,
+  });
+  const fake = (doc: object) => ({
+    from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: doc }) }) }) }),
+  });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  assert.equal(await findSendableDocument(fake(row({})) as any, id, "confidencial", "empresa-a", false), null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  assert.ok(await findSendableDocument(fake(row({})) as any, id, "confidencial", null, true));
+  const other = row({ title: "Ficha técnica X", category: "TDS", company_id: "empresa-b" });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  assert.equal(await findSendableDocument(fake(other) as any, id, "confidencial", "empresa-a", true), null);
 });

@@ -27,6 +27,13 @@ export interface ContactContext {
   level: AccessLevel;
   companyId: string | null;
   companyName: string | null;
+  /** Personal interno de la empresa (marcado en el portal), no un cliente. */
+  internal: boolean;
+}
+
+/** El SGI (procesos internos) solo es para personal interno con nivel Confidencial. */
+function canSeeSgi(contact: ContactContext): boolean {
+  return contact.level === "confidencial" && contact.internal;
 }
 
 export interface HistoryTurn {
@@ -139,7 +146,9 @@ function contactNote(contact: ContactContext): string {
   }
   if (contact.level === "confidencial") {
     lines.push(
-      "- Es un contacto de confianza (puede ser personal interno de la empresa): responde directo, sin pedirle datos ni tratarlo como prospecto."
+      contact.internal
+        ? "- Es personal interno de la empresa: responde directo, sin pedirle datos ni tratarlo como prospecto."
+        : "- Es un contacto externo de confianza (no es personal interno): responde directo, sin pedirle datos ni tratarlo como prospecto. No tiene acceso a documentos internos del SGI."
     );
   }
   return lines.join("\n");
@@ -297,7 +306,7 @@ function formatMatches(matches: KbMatch[], meta: Map<string, DocumentMeta>, cont
       if (info?.summary) lines.push(`Resumen: ${info.summary}`);
       if (info?.sendable) lines.push(`[archivo enviable: id ${docId}]`);
       // El enlace al original (Drive) solo sirve a quien tiene acceso: personal interno.
-      if (info?.url && contact.level === "confidencial") lines.push(`[enlace al documento: ${info.url}]`);
+      if (info?.url && canSeeSgi(contact)) lines.push(`[enlace al documento: ${info.url}]`);
       for (const m of list) lines.push(`[${++n}] ${m.content}`);
       return lines.join("\n");
     })
@@ -311,10 +320,10 @@ async function searchWithFiles(
   contact: ContactContext,
   limit?: number
 ): Promise<{ matches: KbMatch[]; text: string }> {
-  // Documentos del SGI: solo para contactos Confidenciales, por regla del
+  // Documentos del SGI: solo para personal interno Confidencial, por regla del
   // sistema (no solo del prompt), aunque alguien los haya subido con otro nivel.
   const matches = (await searchKnowledge(adminClient, query, contact.level, contact.companyId, limit)).filter(
-    (m) => contact.level === "confidencial" || !isSgiDocument(m.category, m.title)
+    (m) => canSeeSgi(contact) || !isSgiDocument(m.category, m.title)
   );
   let meta = new Map<string, DocumentMeta>();
   try {
@@ -480,7 +489,7 @@ export async function generateReply({
         }
       } else if (block.name === "buscar_enlace" && typeof input.consulta === "string") {
         try {
-          const found = await findLinks(adminClient, input.consulta, contact.level, contact.companyId);
+          const found = await findLinks(adminClient, input.consulta, contact.level, contact.companyId, canSeeSgi(contact));
           toolResults.push({
             type: "tool_result",
             tool_use_id: block.id,
@@ -492,10 +501,10 @@ export async function generateReply({
         }
       } else if (block.name === "buscar_archivo" && typeof input.nombre === "string") {
         try {
-          const found = await findDocumentsByName(adminClient, input.nombre, contact.level, contact.companyId);
+          const found = await findDocumentsByName(adminClient, input.nombre, contact.level, contact.companyId, canSeeSgi(contact));
           const forClients =
             found.length === 0 && contact.level === "publico"
-              ? (await findDocumentsByName(adminClient, input.nombre, "cliente", contact.companyId)).length > 0
+              ? (await findDocumentsByName(adminClient, input.nombre, "cliente", contact.companyId, false)).length > 0
               : false;
           toolResults.push({
             type: "tool_result",
@@ -531,7 +540,7 @@ export async function generateReply({
           isError = true;
         } else {
           // El permiso se vuelve a verificar aquí: no basta con que el modelo tenga el id.
-          const doc = await findSendableDocument(adminClient, id, contact.level, contact.companyId).catch(() => null);
+          const doc = await findSendableDocument(adminClient, id, contact.level, contact.companyId, canSeeSgi(contact)).catch(() => null);
           if (doc) {
             documents.push(doc);
             content = `Listo: "${doc.title}" se enviará como archivo justo después de tu mensaje.`;
