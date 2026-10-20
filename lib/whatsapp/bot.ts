@@ -291,7 +291,9 @@ async function respond(
     companyName = company?.name ?? null;
   }
 
-  const reply = await generateReply({
+  let reply: Awaited<ReturnType<typeof generateReply>>;
+  try {
+    reply = await generateReply({
     settings,
     contact: {
       name: contact.display_name ?? contact.profile_name,
@@ -306,6 +308,24 @@ async function respond(
     systemNote: opts.systemNote,
     searchQuery: opts.searchQuery,
   });
+  } catch (err) {
+    // La IA no respondió (límite de gasto de Anthropic, clave inválida, caída
+    // del servicio…): el cliente no se queda sin respuesta y el equipo se entera.
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error("[bot] la IA falló:", detail);
+    const limit = /usage limits|credit balance/i.test(detail);
+    await sendAndLog(supabase, contact, settings.handoff_message, "sistema");
+    await flagAttention(
+      supabase,
+      contact,
+      limit
+        ? "La IA está detenida: se alcanzó el límite de gasto o se acabó el saldo en la cuenta de Anthropic (Claude Console → Settings → Limits / Billing)."
+        : `La IA no pudo responder: ${detail.slice(0, 300)}`,
+      settings,
+      { title: limit ? "⚠️ Bot sin IA: límite de gasto de Anthropic" : "⚠️ Error de la IA del bot" }
+    );
+    return;
+  }
 
   await supabase.from("ai_usage").insert({
     contact_id: contact.id,
