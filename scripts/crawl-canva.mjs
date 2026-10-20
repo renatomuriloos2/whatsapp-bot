@@ -244,7 +244,10 @@ function toMarkdown({ sites, failed }) {
         const key = `${site.url}|${href}`;
         if (done.has(key)) continue;
         done.add(key);
-        const label = chosen.get(href) || "Enlace sin nombre";
+        // Botón "Da click" sin título propio: se nombra por la sección y el proceso
+        // (ej. "Indicadores – Recursos Humanos").
+        const secName = sec.charAt(0).toUpperCase() + sec.slice(1).toLowerCase();
+        const label = chosen.get(href) || `${secName} – ${site.title || "Portal SGI"}`;
         lines.push(`- ${label} (${tipo(href)}): ${href}`);
         count++;
       }
