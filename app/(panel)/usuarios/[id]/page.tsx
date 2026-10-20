@@ -7,15 +7,14 @@ import { requireAppUser } from "@/lib/auth";
 import { roleLabel } from "@/lib/utils";
 import { notFound } from "next/navigation";
 
-export default async function EditUsuarioPage({
-  params,
-  searchParams,
-}: {
-  params: { id: string };
-  searchParams: { password_set?: string; role_updated?: string };
+export default async function EditUsuarioPage(props: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ password_set?: string; role_updated?: string }>;
 }) {
+  const params = await props.params;
+  const searchParams = await props.searchParams;
   const currentUser = await requireAppUser("admin");
-  const supabase = createClient();
+  const supabase = await createClient();
   const user = await getAppUserById(supabase, params.id);
 
   if (!user) notFound();

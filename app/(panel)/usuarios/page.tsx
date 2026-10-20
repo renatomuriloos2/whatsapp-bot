@@ -5,13 +5,12 @@ import { CreateUserForm } from "@/components/CreateUserForm";
 import { requireAppUser } from "@/lib/auth";
 import { roleLabel } from "@/lib/utils";
 
-export default async function UsuariosPage({
-  searchParams,
-}: {
-  searchParams: { created?: string; deleted?: string };
+export default async function UsuariosPage(props: {
+  searchParams: Promise<{ created?: string; deleted?: string }>;
 }) {
+  const searchParams = await props.searchParams;
   await requireAppUser("admin");
-  const users = await getAllAppUsers(createClient());
+  const users = await getAllAppUsers(await createClient());
 
   return (
     <div>

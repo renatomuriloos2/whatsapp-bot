@@ -1,6 +1,7 @@
 "use client";
 
-import { useFormState, useFormStatus } from "react-dom";
+import { useActionState } from "react";
+import { useFormStatus } from "react-dom";
 import { deleteUserAction, ActionState } from "@/lib/actions/users";
 
 const initialState: ActionState = { error: null };
@@ -16,7 +17,7 @@ function SubmitButton() {
 
 export function DeleteUserForm({ userId }: { userId: string }) {
   const action = deleteUserAction.bind(null, userId);
-  const [state, formAction] = useFormState(action, initialState);
+  const [state, formAction] = useActionState(action, initialState);
 
   return (
     <form action={formAction}>

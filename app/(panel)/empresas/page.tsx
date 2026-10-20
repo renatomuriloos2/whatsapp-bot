@@ -7,7 +7,7 @@ import { formatDate } from "@/lib/utils";
 export const dynamic = "force-dynamic";
 
 export default async function EmpresasPage() {
-  const supabase = createClient();
+  const supabase = await createClient();
   const [companies, { data: contactRows }, { data: docRows }] = await Promise.all([
     getAllCompanies(supabase),
     supabase.from("wa_contacts").select("company_id").not("company_id", "is", null),

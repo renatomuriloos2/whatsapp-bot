@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { handleIncomingMessage } from "@/lib/whatsapp/bot";
+import { processIncomingMessage, recordIncomingMessage } from "@/lib/whatsapp/bot";
 import { messageText, verifySignature, WebhookPayload } from "@/lib/whatsapp/cloud-api";
 
 export const dynamic = "force-dynamic";
@@ -38,6 +38,8 @@ export async function POST(request: Request) {
 
   const supabase = createAdminClient();
   const jobs: Promise<unknown>[] = [];
+  const records: Promise<unknown>[] = [];
+  let failed = false;
 
   for (const entry of payload.entry ?? []) {
     for (const change of entry.changes ?? []) {
@@ -46,14 +48,31 @@ export async function POST(request: Request) {
 
       for (const msg of value.messages ?? []) {
         const profile = value.contacts?.find((c) => c.wa_id === msg.from)?.profile?.name ?? null;
-        jobs.push(
-          handleIncomingMessage(supabase, {
-            from: msg.from,
-            profileName: profile,
-            waMessageId: msg.id,
-            type: msg.type,
-            text: messageText(msg),
-          }).catch((err) => console.error("[whatsapp] error procesando mensaje:", err))
+        const incoming = {
+          from: msg.from,
+          profileName: profile,
+          waMessageId: msg.id,
+          type: msg.type,
+          text: messageText(msg),
+        };
+        // El mensaje se guarda ANTES de responder 200 a Meta: si algo falla
+        // después, queda en la base y Meta no lo reintenta en vano.
+        records.push(
+          recordIncomingMessage(supabase, incoming).then(
+            (recorded) => {
+              if (recorded) {
+                jobs.push(
+                  processIncomingMessage(supabase, recorded, incoming).catch((err) =>
+                    console.error("[whatsapp] error procesando mensaje:", err)
+                  )
+                );
+              }
+            },
+            (err) => {
+              failed = true;
+              console.error("[whatsapp] no se pudo guardar el mensaje:", err);
+            }
+          )
         );
       }
 
@@ -68,7 +87,11 @@ export async function POST(request: Request) {
     }
   }
 
-  // Meta espera un 200 rápido o reintenta; el trabajo sigue en segundo plano.
+  await Promise.allSettled(records);
+  // Meta espera un 200 rápido o reintenta; la respuesta con IA sigue en segundo plano.
   waitUntil(Promise.allSettled(jobs));
+  // Si no se pudo guardar algún mensaje (ej. base caída), 500 → Meta lo reintenta
+  // más tarde; los ya guardados se ignoran en el reintento por su id único.
+  if (failed) return NextResponse.json({ ok: false }, { status: 500 });
   return NextResponse.json({ ok: true });
 }

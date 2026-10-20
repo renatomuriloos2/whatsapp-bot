@@ -36,7 +36,7 @@ export async function addSourceAction(_prev: ActionState, formData: FormData): P
     const level = String(formData.get("access_level") ?? "publico") as AccessLevel;
     const folder = await resolveFolder(provider, shareUrl);
 
-    const supabase = createClient();
+    const supabase = await createClient();
     const { data: source, error } = await supabase
       .from("kb_sources")
       .insert({
@@ -86,7 +86,7 @@ export async function syncSourceAction(id: string): Promise<{ done: boolean; err
 
 export async function toggleSourceAction(formData: FormData) {
   await requireAppUser("admin");
-  const supabase = createClient();
+  const supabase = await createClient();
   await supabase
     .from("kb_sources")
     .update({ enabled: formData.get("enabled") === "true" })
@@ -96,7 +96,7 @@ export async function toggleSourceAction(formData: FormData) {
 
 export async function updateSourceAccessAction(formData: FormData) {
   await requireAppUser("admin");
-  const supabase = createClient();
+  const supabase = await createClient();
   const id = String(formData.get("id"));
   const level = String(formData.get("access_level")) as AccessLevel;
   if (!ACCESS_LEVELS.includes(level)) return;
@@ -110,7 +110,7 @@ export async function updateSourceAccessAction(formData: FormData) {
 
 export async function deleteSourceAction(formData: FormData) {
   await requireAppUser("admin");
-  const supabase = createClient();
+  const supabase = await createClient();
   // Sus documentos se borran en cascada (kb_documents.source_id).
   await supabase.from("kb_sources").delete().eq("id", String(formData.get("id")));
   revalidatePath("/carpetas");

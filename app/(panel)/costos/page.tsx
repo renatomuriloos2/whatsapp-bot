@@ -14,7 +14,7 @@ const fmtInt = (n: number) => n.toLocaleString("es-CO");
 
 export default async function CostosPage() {
   await requireAppUser("admin");
-  const supabase = createClient();
+  const supabase = await createClient();
 
   const since = daysAgo(29);
   const [settings, rows] = await Promise.all([getBotSettings(supabase), getUsageSince(supabase, since)]);

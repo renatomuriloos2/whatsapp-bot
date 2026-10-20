@@ -6,8 +6,9 @@ import { DocumentForm } from "@/components/whatsapp/DocumentForm";
 import { deleteDocumentAction } from "@/lib/actions/whatsapp";
 import { KbDocument } from "@/types/database";
 
-export default async function EditDocumentPage({ params }: { params: { id: string } }) {
-  const supabase = createClient();
+export default async function EditDocumentPage(props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
+  const supabase = await createClient();
   const [{ data }, companies] = await Promise.all([
     supabase.from("kb_documents").select("*").eq("id", params.id).single(),
     getAllCompanies(supabase),

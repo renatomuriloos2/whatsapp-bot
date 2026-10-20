@@ -31,7 +31,7 @@ function SetupItem({ ok, label, hint }: { ok: boolean; label: string; hint: stri
 export default async function WhatsAppDashboardPage() {
   const appUser = await requireAppUser();
   const isAdmin = appUser.role === "admin";
-  const supabase = createClient();
+  const supabase = await createClient();
 
   const dayStart = new Date();
   dayStart.setUTCHours(0, 0, 0, 0);

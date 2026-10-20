@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 export default async function ConfiguracionBotPage() {
   await requireAppUser("admin");
-  const settings = await getBotSettings(createClient());
+  const settings = await getBotSettings(await createClient());
 
   return (
     <div>

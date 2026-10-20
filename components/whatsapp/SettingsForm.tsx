@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { useFormState, useFormStatus } from "react-dom";
+import { useActionState, useRef, useState } from "react";
+import { useFormStatus } from "react-dom";
 import { testNotificationAction, updateSettingsAction } from "@/lib/actions/whatsapp";
 import { ActionState } from "@/lib/action-state";
 import { BotSettings } from "@/types/database";
@@ -66,7 +66,7 @@ function TestNotificationButton() {
 }
 
 export function SettingsForm({ settings }: { settings: BotSettings }) {
-  const [state, formAction] = useFormState(updateSettingsAction, initialState);
+  const [state, formAction] = useActionState(updateSettingsAction, initialState);
   const submitted = useRef(false);
 
   return (

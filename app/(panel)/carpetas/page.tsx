@@ -39,7 +39,7 @@ function formatDateTime(value: string | null) {
 
 export default async function CarpetasPage() {
   await requireAppUser("admin");
-  const supabase = createClient();
+  const supabase = await createClient();
   const [{ data }, companies] = await Promise.all([
     supabase.from("kb_sources").select("*").order("created_at"),
     getAllCompanies(supabase),

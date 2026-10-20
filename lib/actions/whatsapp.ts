@@ -46,7 +46,7 @@ export async function createDocumentAction(
 ): Promise<ActionState> {
   try {
     const appUser = await requireAppUser();
-    const supabase = createClient();
+    const supabase = await createClient();
 
     const title = String(formData.get("title") ?? "").trim();
     const category = String(formData.get("category") ?? "").trim() || null;
@@ -118,7 +118,7 @@ export async function updateDocumentAction(
   const id = String(formData.get("id") ?? "");
   try {
     await requireAppUser();
-    const supabase = createClient();
+    const supabase = await createClient();
 
     const title = String(formData.get("title") ?? "").trim();
     const content = String(formData.get("content") ?? "").trim();
@@ -152,7 +152,7 @@ export async function updateDocumentAction(
 
 export async function toggleDocumentAction(formData: FormData) {
   await requireAppUser();
-  const supabase = createClient();
+  const supabase = await createClient();
   await supabase
     .from("kb_documents")
     .update({ active: formData.get("active") === "true" })
@@ -162,7 +162,7 @@ export async function toggleDocumentAction(formData: FormData) {
 
 export async function deleteDocumentAction(formData: FormData) {
   await requireAppUser();
-  const supabase = createClient();
+  const supabase = await createClient();
   const id = String(formData.get("id"));
   const { data: doc } = await supabase.from("kb_documents").select("storage_path").eq("id", id).maybeSingle();
   await supabase.from("kb_documents").delete().eq("id", id);
@@ -194,7 +194,7 @@ export async function createContactAction(
 ): Promise<ActionState> {
   try {
     await requireAppUser();
-    const supabase = createClient();
+    const supabase = await createClient();
     const phone = normalizePhone(String(formData.get("phone") ?? ""));
     if (!phone) {
       return { error: "Número inválido. Usa formato internacional con código de país (ej. +57 300 123 4567)." };
@@ -217,7 +217,7 @@ export async function updateContactAction(
 ): Promise<ActionState> {
   try {
     await requireAppUser();
-    const supabase = createClient();
+    const supabase = await createClient();
     const id = String(formData.get("id") ?? "");
     const fields = contactFields(formData);
     const { data: before } = await supabase.from("wa_contacts").select("access_level").eq("id", id).single();
@@ -233,6 +233,10 @@ export async function updateContactAction(
 
     // Se aprobó el registro (de Público a Cliente o Confidencial): el bot le
     // escribe y le entrega lo que había pedido.
+    // Nivel más bajo que antes: la IA ya no ve la conversación previa.
+    if (before && ACCESS_LEVELS.indexOf(fields.access_level) < ACCESS_LEVELS.indexOf(before.access_level)) {
+      await supabase.from("wa_contacts").update({ history_reset_at: new Date().toISOString() }).eq("id", id);
+    }
     if (before?.access_level === "publico" && fields.access_level !== "publico") {
       try {
         await resumeAfterApproval(createAdminClient(), id);
@@ -251,7 +255,7 @@ export async function updateContactAction(
 
 export async function deleteContactAction(formData: FormData) {
   await requireAppUser();
-  const supabase = createClient();
+  const supabase = await createClient();
   await supabase.from("wa_contacts").delete().eq("id", String(formData.get("id")));
   revalidatePath("/conversaciones");
   redirect("/conversaciones");
@@ -259,7 +263,7 @@ export async function deleteContactAction(formData: FormData) {
 
 export async function setBotPausedAction(formData: FormData) {
   await requireAppUser();
-  const supabase = createClient();
+  const supabase = await createClient();
   const id = String(formData.get("id"));
   const paused = formData.get("paused") === "true";
   await supabase
@@ -273,7 +277,7 @@ export async function setBotPausedAction(formData: FormData) {
 
 export async function resolveAttentionAction(formData: FormData) {
   await requireAppUser();
-  const supabase = createClient();
+  const supabase = await createClient();
   const id = String(formData.get("id"));
   await supabase
     .from("wa_contacts")
@@ -293,7 +297,7 @@ export async function sendAgentMessageAction(
     if (!whatsappConfigured()) {
       return { error: "WhatsApp no está configurado (faltan variables WHATSAPP_* en el servidor)." };
     }
-    const supabase = createClient();
+    const supabase = await createClient();
     const id = String(formData.get("id") ?? "");
     const body = String(formData.get("body") ?? "").trim();
     if (!body) return { error: "Escribe un mensaje." };
@@ -339,7 +343,7 @@ export async function updateSettingsAction(
 ): Promise<ActionState> {
   try {
     await requireAppUser("admin");
-    const supabase = createClient();
+    const supabase = await createClient();
 
     const model = String(formData.get("model"));
     const effort = String(formData.get("effort"));
@@ -510,7 +514,7 @@ export async function createCompanyAction(
     await requireAppUser();
     const name = String(formData.get("name") ?? "").trim();
     if (!name) return { error: "El nombre es obligatorio." };
-    const supabase = createClient();
+    const supabase = await createClient();
     const { error } = await supabase.from("companies").insert({
       name,
       notes: String(formData.get("notes") ?? "").trim() || null,
@@ -526,14 +530,14 @@ export async function createCompanyAction(
 
 export async function deleteCompanyAction(formData: FormData) {
   await requireAppUser();
-  const supabase = createClient();
+  const supabase = await createClient();
   await supabase.from("companies").delete().eq("id", String(formData.get("id")));
   revalidatePath("/empresas");
 }
 
 export async function resolveAlertAction(formData: FormData) {
   await requireAppUser();
-  const supabase = createClient();
+  const supabase = await createClient();
   await supabase.from("kb_alerts").update({ resolved: true }).eq("id", String(formData.get("id")));
   revalidatePath("/conocimiento");
 }
@@ -570,7 +574,7 @@ export async function renameCategoryAction(formData: FormData) {
   const from = String(formData.get("from") ?? "");
   const to = String(formData.get("to") ?? "").trim();
   if (!from || !to || from === to) return;
-  const supabase = createClient();
+  const supabase = await createClient();
   await supabase.from("kb_documents").update({ category: to }).eq("category", from);
   revalidatePath("/conocimiento");
 }

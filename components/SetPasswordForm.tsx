@@ -1,6 +1,7 @@
 "use client";
 
-import { useFormState, useFormStatus } from "react-dom";
+import { useActionState } from "react";
+import { useFormStatus } from "react-dom";
 import { setUserPasswordAction, ActionState } from "@/lib/actions/users";
 
 const initialState: ActionState = { error: null };
@@ -16,7 +17,7 @@ function SubmitButton() {
 
 export function SetPasswordForm({ userId }: { userId: string }) {
   const action = setUserPasswordAction.bind(null, userId);
-  const [state, formAction] = useFormState(action, initialState);
+  const [state, formAction] = useActionState(action, initialState);
 
   return (
     <form action={formAction} className="flex flex-col gap-3">

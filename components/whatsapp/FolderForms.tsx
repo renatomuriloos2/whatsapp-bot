@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useFormState, useFormStatus } from "react-dom";
+import { useFormStatus } from "react-dom";
 import { addSourceAction, syncSourceAction } from "@/lib/actions/sources";
 import { ActionState } from "@/lib/action-state";
 import { Company } from "@/types/database";
@@ -59,7 +59,7 @@ export function SyncButton({ id }: { id: string }) {
 }
 
 export function AddSourceForm({ companies }: { companies: Pick<Company, "id" | "name">[] }) {
-  const [state, formAction] = useFormState(addSourceAction, initialState);
+  const [state, formAction] = useActionState(addSourceAction, initialState);
   const formRef = useRef<HTMLFormElement>(null);
   const submitted = useRef(false);
 

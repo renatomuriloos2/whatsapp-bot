@@ -161,21 +161,27 @@ async function flagAttention(
   });
 }
 
+export interface IncomingMessage {
+  from: string;
+  profileName: string | null;
+  waMessageId: string;
+  type: string;
+  text: string | null;
+}
+
+// Si el cliente manda varios mensajes seguidos, se espera este tiempo y se
+// responde una sola vez a todos juntos (el último mensaje se encarga).
+const DEBOUNCE_MS = 3500;
+
 /**
- * Procesa un mensaje entrante de WhatsApp de principio a fin: registra el
- * contacto y el mensaje, aplica reglas (bot apagado, bloqueos, presupuesto,
- * límite diario, control humano) y, si corresponde, responde con IA.
+ * Paso 1 (antes de responder 200 a Meta): registra el contacto y guarda el
+ * mensaje. Así el mensaje queda en la base aunque el procesamiento posterior
+ * falle. Devuelve null si es un reintento de Meta ya registrado.
  */
-export async function handleIncomingMessage(
+export async function recordIncomingMessage(
   supabase: SupabaseClient,
-  msg: {
-    from: string;
-    profileName: string | null;
-    waMessageId: string;
-    type: string;
-    text: string | null;
-  }
-): Promise<void> {
+  msg: IncomingMessage
+): Promise<{ settings: BotSettings; contact: WaContact } | null> {
   const settings = await getBotSettings(supabase);
   const contact = await upsertContact(supabase, msg.from, msg.profileName, settings);
 
@@ -190,7 +196,7 @@ export async function handleIncomingMessage(
   });
   // Violación de unicidad = Meta reintentó un webhook que ya procesamos.
   if (insertError) {
-    if (insertError.code === "23505") return;
+    if (insertError.code === "23505") return null;
     throw new Error(insertError.message);
   }
 
@@ -199,11 +205,40 @@ export async function handleIncomingMessage(
     .from("wa_contacts")
     .update({ last_inbound_at: now, last_message_at: now })
     .eq("id", contact.id);
+  return { settings, contact };
+}
 
-  if (contact.status === "bloqueado") return;
-  if (!settings.enabled || contact.bot_paused) return;
+/**
+ * Paso 2 (en segundo plano): aplica reglas (bot apagado, bloqueos,
+ * presupuesto, límite diario, control humano) y, si corresponde, responde.
+ */
+export async function processIncomingMessage(
+  supabase: SupabaseClient,
+  { settings, contact: initial }: { settings: BotSettings; contact: WaContact },
+  msg: IncomingMessage
+): Promise<void> {
+  if (initial.status === "bloqueado") return;
+  if (!settings.enabled || initial.bot_paused) return;
 
   await markReadWithTyping(msg.waMessageId);
+
+  // Mensajes seguidos: solo responde el último, con todos en el historial.
+  await new Promise((r) => setTimeout(r, DEBOUNCE_MS));
+  const { data: latest } = await supabase
+    .from("wa_messages")
+    .select("wa_message_id")
+    .eq("contact_id", initial.id)
+    .eq("direction", "in")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (latest && latest.wa_message_id !== msg.waMessageId) return;
+
+  // Estado actual del contacto (pudo pasar a atención humana o cambiar de nivel).
+  const { data: fresh } = await supabase.from("wa_contacts").select("*").eq("id", initial.id).single();
+  const contact = (fresh ?? initial) as WaContact;
+  if (contact.status === "bloqueado" || contact.bot_paused) return;
+  const body = msg.text ?? `[${msg.type}]`;
 
   if (contact.status === "pendiente") {
     // Se avisa una sola vez; el resto queda en la bandeja para el equipo.
@@ -269,12 +304,16 @@ async function respond(
   opts: { userText: string; excludeMessageId?: string; systemNote?: string; searchQuery?: string }
 ) {
   // Historial reciente (sin el mensaje actual), del más antiguo al más nuevo.
-  const { data: recent } = await supabase
+  // Si al contacto le bajaron el nivel de acceso, la conversación anterior
+  // (que pudo traer información de su nivel previo) ya no se le muestra a la IA.
+  let historyQuery = supabase
     .from("wa_messages")
     .select("direction, sender, body, wa_message_id")
     .eq("contact_id", contact.id)
     .order("created_at", { ascending: false })
     .limit(settings.history_messages + 1);
+  if (contact.history_reset_at) historyQuery = historyQuery.gte("created_at", contact.history_reset_at);
+  const { data: recent } = await historyQuery;
   const history: HistoryTurn[] = (recent ?? [])
     .filter((m) => !opts.excludeMessageId || m.wa_message_id !== opts.excludeMessageId)
     .slice(0, settings.history_messages)
@@ -327,7 +366,7 @@ async function respond(
     return;
   }
 
-  await supabase.from("ai_usage").insert({
+  const usageRow = {
     contact_id: contact.id,
     source: "whatsapp",
     model: reply.model,
@@ -340,7 +379,18 @@ async function respond(
     tool_calls: reply.toolCalls,
     latency_ms: reply.latencyMs,
     stop_reason: reply.stopReason,
-  });
+  };
+  // Trazabilidad: qué documentos se usaron en esta respuesta (columna de la
+  // migración 009; sin ella se guarda el resto igual).
+  const { error: usageError } = await supabase
+    .from("ai_usage")
+    .insert({ ...usageRow, documents: [...reply.sources, ...reply.documents.map((d) => `archivo: ${d.title}`)] });
+  if (usageError) await supabase.from("ai_usage").insert(usageRow);
+
+  // Mientras la IA respondía, alguien pudo tomar el control o bloquear el número.
+  const { data: now } = await supabase.from("wa_contacts").select("bot_paused, status").eq("id", contact.id).single();
+  if (now?.bot_paused || now?.status === "bloqueado") return;
+
 
   if (reply.text) {
     await sendAndLog(supabase, contact, reply.text, "bot");
@@ -406,4 +456,10 @@ export async function resumeAfterApproval(supabase: SupabaseClient, contactId: s
   });
   await supabase.from("wa_contacts").update({ needs_attention: false, attention_reason: null }).eq("id", contact.id);
   return true;
+}
+
+/** Registra y procesa un mensaje entrante (ambos pasos seguidos). */
+export async function handleIncomingMessage(supabase: SupabaseClient, msg: IncomingMessage): Promise<void> {
+  const recorded = await recordIncomingMessage(supabase, msg);
+  if (recorded) await processIncomingMessage(supabase, recorded, msg);
 }

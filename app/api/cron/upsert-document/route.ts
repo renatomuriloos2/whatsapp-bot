@@ -28,6 +28,15 @@ export async function POST(request: Request) {
   if (!key || !title || !content) {
     return NextResponse.json({ error: "Faltan key, title o content." }, { status: 400 });
   }
+  // Solo documentos autorizados (por defecto, la lista del Portal SGI): si la
+  // clave se filtrara, no serviría para meter otros documentos en el bot.
+  const allowed = (process.env.UPSERT_DOCUMENT_KEYS || "portal-sgi-enlaces").split(",").map((k) => k.trim());
+  if (!allowed.includes(key)) {
+    return NextResponse.json({ error: "Documento no autorizado." }, { status: 403 });
+  }
+  if (content.length > 2_000_000) {
+    return NextResponse.json({ error: "Contenido demasiado grande." }, { status: 413 });
+  }
   const level = (ACCESS_LEVELS.includes(body?.access_level as AccessLevel) ? body?.access_level : "confidencial") as AccessLevel;
 
   const supabase = createAdminClient();

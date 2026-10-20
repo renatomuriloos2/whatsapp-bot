@@ -38,9 +38,10 @@ function formatTime(value: string) {
   });
 }
 
-export default async function ContactDetailPage({ params }: { params: { id: string } }) {
+export default async function ContactDetailPage(props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const appUser = await requireAppUser();
-  const supabase = createClient();
+  const supabase = await createClient();
 
   const [{ data: contactData }, { data: messagesData }, companies, usage] = await Promise.all([
     supabase.from("wa_contacts").select("*").eq("id", params.id).single(),

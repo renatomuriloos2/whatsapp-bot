@@ -33,7 +33,7 @@ export async function createUserAction(
 
     if (createError) return { error: createError.message };
 
-    const supabase = createClient();
+    const supabase = await createClient();
     const { error: insertError } = await supabase.from("users").insert({
       id: created.user.id,
       email,
@@ -86,7 +86,7 @@ export async function updateUserRoleAction(
 ): Promise<ActionState> {
   try {
     await requireAppUser("admin");
-    const supabase = createClient();
+    const supabase = await createClient();
 
     const role = String(formData.get("role") ?? "agente").trim();
     if (role !== "admin" && role !== "agente") return { error: "Rol inválido." };

@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { useFormState, useFormStatus } from "react-dom";
+import { useActionState, useEffect, useRef } from "react";
+import { useFormStatus } from "react-dom";
 import { createContactAction, updateContactAction } from "@/lib/actions/whatsapp";
 import { ActionState } from "@/lib/action-state";
 import { Company, WaContact } from "@/types/database";
@@ -26,7 +26,7 @@ export function ContactForm({
   contact?: WaContact;
 }) {
   const editing = Boolean(contact);
-  const [state, formAction] = useFormState(
+  const [state, formAction] = useActionState(
     editing ? updateContactAction : createContactAction,
     initialState
   );

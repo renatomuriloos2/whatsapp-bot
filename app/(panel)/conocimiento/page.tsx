@@ -13,12 +13,11 @@ export const dynamic = "force-dynamic";
 // El análisis de documentos con IA corre en tandas de ~45 s.
 export const maxDuration = 60;
 
-export default async function ConocimientoPage({
-  searchParams,
-}: {
-  searchParams: { q?: string };
+export default async function ConocimientoPage(props: {
+  searchParams: Promise<{ q?: string }>;
 }) {
-  const supabase = createClient();
+  const searchParams = await props.searchParams;
+  const supabase = await createClient();
   const q = searchParams.q?.trim() ?? "";
 
   let query = supabase

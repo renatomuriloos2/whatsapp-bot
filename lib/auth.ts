@@ -3,7 +3,7 @@ import { AppUser, Role } from "@/types/database";
 import { redirect } from "next/navigation";
 
 export async function requireAppUser(allowedRoles?: Role | Role[]): Promise<AppUser> {
-  const supabase = createClient();
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

@@ -1,6 +1,7 @@
 "use client";
 
-import { useFormState, useFormStatus } from "react-dom";
+import { useActionState } from "react";
+import { useFormStatus } from "react-dom";
 import { createUserAction, ActionState } from "@/lib/actions/users";
 import { RoleSelect } from "@/components/RoleSelect";
 
@@ -16,7 +17,7 @@ function SubmitButton() {
 }
 
 export function CreateUserForm() {
-  const [state, formAction] = useFormState(createUserAction, initialState);
+  const [state, formAction] = useActionState(createUserAction, initialState);
 
   return (
     <form action={formAction} className="flex flex-col gap-3">

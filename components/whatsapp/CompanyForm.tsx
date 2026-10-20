@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { useFormState, useFormStatus } from "react-dom";
+import { useActionState, useEffect, useRef } from "react";
+import { useFormStatus } from "react-dom";
 import { createCompanyAction } from "@/lib/actions/whatsapp";
 import { ActionState } from "@/lib/action-state";
 
@@ -17,7 +17,7 @@ function SubmitButton() {
 }
 
 export function CompanyForm() {
-  const [state, formAction] = useFormState(createCompanyAction, initialState);
+  const [state, formAction] = useActionState(createCompanyAction, initialState);
   const formRef = useRef<HTMLFormElement>(null);
   const submitted = useRef(false);
 

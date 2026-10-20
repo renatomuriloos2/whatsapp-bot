@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { useFormState, useFormStatus } from "react-dom";
+import { useActionState, useEffect, useRef } from "react";
+import { useFormStatus } from "react-dom";
 import { createDocumentAction, updateDocumentAction } from "@/lib/actions/whatsapp";
 import { ActionState } from "@/lib/action-state";
 import { Company, KbDocument } from "@/types/database";
@@ -26,7 +26,7 @@ export function DocumentForm({
   document?: KbDocument;
 }) {
   const editing = Boolean(document);
-  const [state, formAction] = useFormState(
+  const [state, formAction] = useActionState(
     editing ? updateDocumentAction : createDocumentAction,
     initialState
   );

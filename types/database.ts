@@ -52,6 +52,8 @@ export interface WaContact {
   needs_attention: boolean;
   attention_reason: string | null;
   last_inbound_at: string | null;
+  /** Desde cuándo la IA ve el historial (se fija al bajar el nivel de acceso). */
+  history_reset_at?: string | null;
   last_message_at: string | null;
   created_at: string;
 }

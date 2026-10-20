@@ -26,12 +26,11 @@ function timeAgo(value: string | null): string {
   return `hace ${Math.round(hours / 24)} d`;
 }
 
-export default async function ContactosPage({
-  searchParams,
-}: {
-  searchParams: { f?: string; q?: string };
+export default async function ContactosPage(props: {
+  searchParams: Promise<{ f?: string; q?: string }>;
 }) {
-  const supabase = createClient();
+  const searchParams = await props.searchParams;
+  const supabase = await createClient();
   const filter = searchParams.f ?? "";
   const q = (searchParams.q ?? "").trim().replace(/[%,()]/g, "");
 

@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { useFormState, useFormStatus } from "react-dom";
+import { useActionState, useEffect, useRef } from "react";
+import { useFormStatus } from "react-dom";
 import { sendAgentMessageAction } from "@/lib/actions/whatsapp";
 import { ActionState } from "@/lib/action-state";
 
@@ -17,7 +17,7 @@ function SubmitButton() {
 }
 
 export function AgentReplyForm({ contactId, windowOpen }: { contactId: string; windowOpen: boolean }) {
-  const [state, formAction] = useFormState(sendAgentMessageAction, initialState);
+  const [state, formAction] = useActionState(sendAgentMessageAction, initialState);
   const formRef = useRef<HTMLFormElement>(null);
   const submitted = useRef(false);
 

@@ -5,7 +5,7 @@ import { TestBotChat } from "@/components/whatsapp/TestBotChat";
 
 export default async function ProbarBotPage() {
   await requireAppUser("admin");
-  const companies = await getAllCompanies(createClient());
+  const companies = await getAllCompanies(await createClient());
 
   return (
     <div>

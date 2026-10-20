@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { useFormState, useFormStatus } from "react-dom";
+import { useActionState, useEffect, useRef } from "react";
+import { useFormStatus } from "react-dom";
 import { testBotAction, TestBotState } from "@/lib/actions/whatsapp";
 import { Company } from "@/types/database";
 import { CompanySelect, LevelSelect } from "@/components/whatsapp/LevelSelect";
@@ -20,7 +20,7 @@ function SendButton() {
 }
 
 export function TestBotChat({ companies }: { companies: Pick<Company, "id" | "name">[] }) {
-  const [state, formAction] = useFormState(testBotAction, initialState);
+  const [state, formAction] = useActionState(testBotAction, initialState);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
