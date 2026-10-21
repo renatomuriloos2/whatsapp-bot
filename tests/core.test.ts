@@ -134,3 +134,28 @@ test("seguridad: nombre de perfil, avisos al equipo y filtro de salida", async (
   assert.equal(validCronAuth(null, "abc"), false);
   assert.equal(validCronAuth("Bearer ", undefined), false);
 });
+
+test("sitios web: recorre subpáginas aunque se conecte con /index.html o con otro www", async () => {
+  const http = await import("node:http");
+  const filler = "Rethink desarrolla químicos textiles sostenibles. ".repeat(6);
+  const pages: Record<string, string> = {
+    "/index.html": `<a href="tecnologia-textil/index.html">Tecnología</a> <a href="/laboratorio/">Laboratorio</a> <a href="https://otro.example/x">Fuera</a> <a href="/catalogo.pdf">PDF</a><p>${filler}</p>`,
+    "/tecnologia-textil/index.html": `<a href="../index.html">Inicio</a><p>Tecnología textil. ${filler}</p>`,
+    "/laboratorio/": `<a href="/index.html">Inicio</a><p>Laboratorio. ${filler}</p>`,
+  };
+  const server = http.createServer((req, res) => {
+    const body = pages[req.url ?? ""];
+    if (!body) return res.writeHead(404).end();
+    res.writeHead(200, { "content-type": "text/html" }).end(`<html><head><title>T</title></head><body>${body}</body></html>`);
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as { port: number }).port;
+  try {
+    const { listWebPages } = await import("../lib/sources/web");
+    const files = await listWebPages(`http://127.0.0.1:${port}/index.html`);
+    const paths = files.map((f) => new URL(f.id).pathname).sort();
+    assert.deepEqual(paths, ["/index.html", "/laboratorio/", "/tecnologia-textil/index.html"]);
+  } finally {
+    server.close();
+  }
+});

@@ -110,7 +110,8 @@ class Reader {
   private browser: Browser | null = null;
   private useBrowser = false;
 
-  async read(url: string): Promise<Page> {
+  async read(url: string, forceBrowser = false): Promise<Page> {
+    if (forceBrowser) this.useBrowser = true;
     if (!this.useBrowser) {
       const res = await fetch(url, {
         headers: { "User-Agent": "Mozilla/5.0 (compatible; RethinkBot/1.0)", Accept: "text/html" },
@@ -136,6 +137,11 @@ class Reader {
       lines.push(l.label ? `- ${l.label}: ${l.href}` : `- ${l.href}`);
     }
     if (lines.length) page.text += `\n\nEnlaces de esta página:\n${lines.join("\n")}`;
+    // Menús armados con JavaScript: sus enlaces también se recorren.
+    for (const l of links) {
+      const abs = absolute(l.href, finalUrl);
+      if (abs && !page.links.includes(abs)) page.links.push(abs);
+    }
     return page;
   }
 
@@ -166,12 +172,56 @@ export function savedHtmlToText(html: string): string {
   return title ? `Página: ${title}\n\n${text}` : text;
 }
 
-/** Dirección base: solo se recorren páginas que empiecen con ella. */
+/**
+ * Dirección base: solo se recorren páginas que empiecen con ella. Si la
+ * dirección termina en un archivo (ej. /index.html), la base es su carpeta.
+ */
 function baseOf(startUrl: string): string {
   const u = new URL(startUrl);
   u.hash = "";
   u.search = "";
+  u.pathname = u.pathname.replace(/\/[^/]*\.[a-z0-9]+$/i, "/");
   return u.toString().replace(/\/$/, "");
+}
+
+/** Misma página aunque cambie "www.", "/index.html" o la barra final. */
+function pageKey(url: string): string {
+  const u = new URL(url);
+  u.hash = "";
+  const host = u.hostname.replace(/^www\./, "");
+  const path = u.pathname.replace(/\/index\.html?$/i, "/").replace(/\/$/, "");
+  return `${host}${path}${u.search}`;
+}
+
+/** El enlace es del mismo sitio y está dentro de la dirección base. */
+function insideBase(link: string, base: string): boolean {
+  try {
+    const u = new URL(link);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+    if (/\.(pdf|jpe?g|png|gif|webp|svg|zip|docx?|xlsx?|pptx?|mp4|mp3)$/i.test(u.pathname)) return false;
+    const b = new URL(base);
+    if (u.hostname.replace(/^www\./, "") !== b.hostname.replace(/^www\./, "")) return false;
+    const path = u.pathname.replace(/\/index\.html?$/i, "/").replace(/\/$/, "");
+    const root = b.pathname.replace(/\/$/, "");
+    return path === root || path.startsWith(`${root}/`);
+  } catch {
+    return false;
+  }
+}
+
+/** Páginas que el sitio declara en /sitemap.xml (si lo tiene). */
+async function sitemapUrls(base: string): Promise<string[]> {
+  try {
+    const res = await fetch(new URL("/sitemap.xml", base), {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; RethinkBot/1.0)" },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return [];
+    const xml = await res.text();
+    return Array.from(xml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi), (m) => m[1]).filter((u) => insideBase(u, base));
+  } catch {
+    return [];
+  }
 }
 
 function pageLabel(page: Page, base: string): string {
@@ -204,6 +254,7 @@ export async function listWebPages(startUrl: string): Promise<RemoteFile[] & { p
   const deadline = Date.now() + CRAWL_BUDGET_MS;
 
   try {
+    for (const url of await sitemapUrls(base)) queue.push(url);
     while (queue.length > 0 && seen.size < MAX_PAGES) {
       if (Date.now() > deadline) {
         // Sin tiempo para todo: lo que falta se lee en la próxima
@@ -212,19 +263,25 @@ export async function listWebPages(startUrl: string): Promise<RemoteFile[] & { p
         break;
       }
       const url = queue.shift()!;
-      const key = url.replace(/\/$/, "");
+      const key = pageKey(url);
       if (seen.has(key)) continue;
       seen.add(key);
 
       let page: Page;
       try {
         page = await reader.read(url);
+        // Página inicial sin enlaces internos en el HTML: el menú se arma
+        // con JavaScript; se vuelve a leer con el navegador interno.
+        if (files.length === 0 && !page.links.some((l) => insideBase(l, base))) {
+          page = await reader.read(url, true);
+        }
       } catch (err) {
         if (files.length === 0) throw err; // la página inicial debe existir
         continue;
       }
+      if (files.some((f) => pageKey(f.id) === pageKey(page.url))) continue; // redirigió a una ya leída
       for (const link of page.links) {
-        if (link.startsWith(base) && !seen.has(link.replace(/\/$/, ""))) queue.push(link);
+        if (insideBase(link, base) && !seen.has(pageKey(link))) queue.push(link);
       }
       if (page.text.length < 40) continue;
 
