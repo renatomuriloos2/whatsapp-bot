@@ -1,6 +1,7 @@
 import "server-only";
 import { BotSettings } from "@/types/database";
 import { sendTemplate, sendText } from "@/lib/whatsapp/cloud-api";
+import { neutralizeForTeam, sanitizeName } from "@/lib/security/guard";
 
 // Avisa al equipo cuando el bot deja algo pendiente (solicitud de acceso,
 // derivación a un asesor, número nuevo por aprobar). Usa el WhatsApp y/o el
@@ -23,9 +24,14 @@ function portalUrl(path = ""): string | null {
 }
 
 function alertText(alert: TeamAlert): string {
-  const who = [alert.contactName, alert.contactPhone ? `+${alert.contactPhone}` : null].filter(Boolean).join(" ");
+  // Nombre y motivo pueden traer texto del cliente: sin enlaces ni saltos de
+  // línea, para que el aviso no sirva para mandarle phishing al equipo.
+  const name = sanitizeName(alert.contactName);
+  const who = [name ? neutralizeForTeam(name, 60) : null, alert.contactPhone ? `+${alert.contactPhone}` : null]
+    .filter(Boolean)
+    .join(" ");
   const link = portalUrl(alert.contactId ? `/conversaciones/${alert.contactId}` : "/conversaciones");
-  return [`🔔 ${alert.title}`, who ? `Contacto: ${who}` : null, alert.reason, link ? `Revisar: ${link}` : null]
+  return [`🔔 ${alert.title}`, who ? `Contacto: ${who}` : null, neutralizeForTeam(alert.reason), link ? `Revisar: ${link}` : null]
     .filter(Boolean)
     .join("\n");
 }

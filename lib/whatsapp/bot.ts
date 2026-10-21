@@ -6,6 +6,7 @@ import { markReadWithTyping, sendDocument, sendText } from "@/lib/whatsapp/cloud
 import { downloadDocumentFile, findSendableDocument, SendableDocument } from "@/lib/documents/files";
 import { notifyTeam } from "@/lib/notifications";
 import { ACCESS_LEVEL_LABELS } from "@/lib/ai/models";
+import { leaksInternalLinks } from "@/lib/security/guard";
 
 export async function getBotSettings(supabase: SupabaseClient): Promise<BotSettings> {
   const { data, error } = await supabase.from("bot_settings").select("*").eq("id", 1).single();
@@ -504,6 +505,22 @@ async function respond(
   // Mientras la IA respondía, alguien pudo tomar el control, bloquear el
   // número o cambiarle los permisos: entonces la respuesta se descarta.
   if (!(await stillAllowed(supabase, contact))) return;
+
+  // Filtro de salida: enlaces internos nunca llegan a quien no es personal
+  // interno, aunque el modelo haya sido engañado para escribirlos.
+  const canSeeSgi = contact.access_level === "confidencial" && internal;
+  if (reply.text && leaksInternalLinks(reply.text, canSeeSgi)) {
+    console.warn(`[bot] respuesta bloqueada por el filtro de salida (contacto ${contact.id})`);
+    await sendAndLog(supabase, contact, settings.handoff_message, "sistema");
+    await flagAttention(
+      supabase,
+      contact,
+      "El filtro de seguridad bloqueó una respuesta con enlaces internos para un contacto sin acceso. Revisa la conversación.",
+      settings,
+      { always: true, title: "🛡️ Respuesta bloqueada por seguridad" }
+    );
+    return;
+  }
 
   if (reply.text) {
     await sendAndLog(supabase, contact, reply.text, "bot");

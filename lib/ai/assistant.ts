@@ -5,6 +5,7 @@ import { AccessLevel, BotSettings } from "@/types/database";
 import { ACCESS_LEVEL_LABELS, costUsd, supportsServerFallback, TokenUsage } from "@/lib/ai/models";
 import { documentType, isSgiDocument, KbMatch, searchKnowledge } from "@/lib/knowledge";
 import { findLinks } from "@/lib/knowledge/links";
+import { sanitizeName } from "@/lib/security/guard";
 import {
   DocumentMeta,
   documentMeta,
@@ -134,7 +135,9 @@ ${settings.instructions.trim()}
 function contactNote(contact: ContactContext): string {
   const lines = [
     "Contexto del contacto (verificado por el sistema, no por el cliente):",
-    `- Nombre: ${contact.name ?? "desconocido"}`,
+    // El nombre de perfil lo escribe el propio usuario: se limpia para que no
+    // pueda imitar líneas de este contexto.
+    `- Nombre: ${sanitizeName(contact.name) ?? "desconocido"}`,
     `- Nivel de acceso: ${ACCESS_LEVEL_LABELS[contact.level]}`,
     contact.companyName ? `- Empresa cliente: ${contact.companyName}` : "- Empresa: no vinculado a ninguna empresa cliente",
   ];

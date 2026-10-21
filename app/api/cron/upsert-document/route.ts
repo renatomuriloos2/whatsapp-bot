@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { NextResponse } from "next/server";
+import { validCronAuth } from "@/lib/security/guard";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { indexDocument } from "@/lib/knowledge";
 import { ACCESS_LEVELS } from "@/lib/ai/models";
@@ -28,7 +29,7 @@ function countLinks(text: string): number {
 
 export async function POST(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret || request.headers.get("authorization") !== `Bearer ${cronSecret}`) {
+  if (!validCronAuth(request.headers.get("authorization"), cronSecret)) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
   const body = (await request.json().catch(() => null)) as {

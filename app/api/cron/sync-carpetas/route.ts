@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { validCronAuth } from "@/lib/security/guard";
 import { waitUntil } from "@vercel/functions";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { syncAllSources } from "@/lib/sources/sync";
@@ -14,7 +15,7 @@ const MAX_ROUNDS = 10;
 // Authorization: Bearer CRON_SECRET.
 export async function GET(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret || request.headers.get("authorization") !== `Bearer ${cronSecret}`) {
+  if (!validCronAuth(request.headers.get("authorization"), cronSecret)) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
   // Se deja margen bajo el límite de 60 s de la función.
